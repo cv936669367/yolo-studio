@@ -4,14 +4,27 @@
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark">Y</span>
-        <span class="brand-name">YOLO Studio</span>
+        <span class="brand-name" v-show="!sidebarCollapsed">YOLO Studio</span>
+        <!-- 折叠侧栏按钮（标题右侧） -->
+        <el-tooltip :content="sidebarCollapsed ? '展开菜单' : '折叠菜单（仅图标）'" placement="bottom">
+          <button
+            class="collapse-btn"
+            :class="{ collapsed: sidebarCollapsed }"
+            @click="toggleSidebar"
+          >
+            <el-icon :size="15">
+              <Expand v-if="sidebarCollapsed" />
+              <Fold v-else />
+            </el-icon>
+          </button>
+        </el-tooltip>
       </div>
 
       <div class="topbar-right">
         <el-tag v-if="currentProject" type="primary" effect="plain" size="small" round>
           {{ currentProject.name }}
         </el-tag>
-        <el-tag size="small" effect="plain" round>v1.0.0</el-tag>
+        <el-tag size="small" effect="plain" round>v1.2.11</el-tag>
         <!-- 计算设备 -->
         <el-tooltip v-if="sysInfo" :content="`推理设备: ${sysInfo.device_name} · torch ${sysInfo.torch}`" placement="bottom">
           <div class="device-badge" :class="sysInfo.device_label === 'GPU' ? 'gpu' : 'cpu'">
@@ -34,49 +47,63 @@
 
     <div class="app-body">
       <!-- Sidebar nav -->
-      <aside class="sidebar">
-        <div class="nav-section-label">工作区</div>
-        <el-menu
-          :default-active="activeMenu"
-          router
-          class="nav-menu"
-          @select="onMenuSelect"
-        >
-          <el-menu-item index="/projects">
-            <el-icon><FolderOpened /></el-icon>
-            <span>工程列表</span>
-          </el-menu-item>
+      <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+        <div class="nav-scroll">
+          <div class="nav-section-label" v-if="!sidebarCollapsed">工作区</div>
+          <div class="nav-stack">
+            <el-tooltip
+              v-for="item in navItems"
+              :key="item.path"
+              :content="item.label"
+              placement="right"
+              :disabled="!sidebarCollapsed"
+            >
+              <div
+                class="nav-item"
+                :class="{ active: activeMenu === item.path, 'nav-icon-only': sidebarCollapsed }"
+                @click="$router.push(item.path)"
+              >
+                <el-icon :size="16"><component :is="item.icon" /></el-icon>
+                <span class="nav-label" v-show="!sidebarCollapsed">{{ item.label }}</span>
+              </div>
+            </el-tooltip>
 
-          <template v-if="currentProjectId">
-            <div class="nav-section-label project-label">
-              {{ currentProject ? currentProject.name : '当前工程' }}
+            <template v-if="currentProjectId">
+              <div class="nav-section-label project-label" v-if="!sidebarCollapsed">
+                {{ currentProject ? currentProject.name : '当前工程' }}
+              </div>
+              <el-tooltip
+                v-for="item in projectNavItems"
+                :key="item.path"
+                :content="item.label"
+                placement="right"
+                :disabled="!sidebarCollapsed"
+              >
+                <div
+                  class="nav-item"
+                  :class="{ active: activeMenu === item.path }"
+                  @click="$router.push(item.path)"
+                >
+                  <el-icon :size="16"><component :is="item.icon" /></el-icon>
+                  <span class="nav-label" v-show="!sidebarCollapsed">{{ item.label }}</span>
+                </div>
+              </el-tooltip>
+            </template>
+          </div>
+        </div>
+
+        <!-- 底部组织标识：新疆软件园 -->
+        <div class="sidebar-footer" :class="{ collapsed: sidebarCollapsed }">
+          <el-tooltip content="新疆软件园" placement="right" :disabled="!sidebarCollapsed">
+            <div class="org-badge">
+              <span class="org-mark">疆</span>
+              <span class="org-text" v-show="!sidebarCollapsed">
+                <span class="org-name">新疆软件园</span>
+                <span class="org-sub">XINJIANG SOFTWARE PARK</span>
+              </span>
             </div>
-            <el-menu-item :index="`/project/${currentProjectId}/dataset`">
-              <el-icon><Picture /></el-icon>
-              <span>数据集</span>
-            </el-menu-item>
-            <el-menu-item :index="`/project/${currentProjectId}/annotate`">
-              <el-icon><EditPen /></el-icon>
-              <span>图片标注</span>
-            </el-menu-item>
-            <el-menu-item :index="`/project/${currentProjectId}/train`">
-              <el-icon><Cpu /></el-icon>
-              <span>模型训练</span>
-            </el-menu-item>
-            <el-menu-item :index="`/project/${currentProjectId}/artifacts`">
-              <el-icon><Box /></el-icon>
-              <span>制品管理</span>
-            </el-menu-item>
-            <el-menu-item :index="`/project/${currentProjectId}/evaluate`">
-              <el-icon><DataAnalysis /></el-icon>
-              <span>模型验证</span>
-            </el-menu-item>
-            <el-menu-item :index="`/project/${currentProjectId}/test`">
-              <el-icon><View /></el-icon>
-              <span>测试识别</span>
-            </el-menu-item>
-          </template>
-        </el-menu>
+          </el-tooltip>
+        </div>
       </aside>
 
       <!-- Main content -->
@@ -98,6 +125,30 @@ const currentProject = ref(null)
 
 // ─── 主题切换（明亮/暗黑）───
 const isDark = ref(document.documentElement.classList.contains('dark'))
+
+// 侧栏折叠（仅图标模式）
+const sidebarCollapsed = ref(localStorage.getItem('yolo_sidebar') === '1')
+const toggleSidebar = () => {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  localStorage.setItem('yolo_sidebar', sidebarCollapsed.value ? '1' : '0')
+}
+
+// 导航菜单（图标用全局注册的 Element 图标名）
+const navItems = [
+  { path: '/projects', icon: 'FolderOpened', label: '工程列表' },
+]
+const projectNavItems = computed(() => {
+  const pid = currentProjectId.value
+  if (!pid) return []
+  return [
+    { path: `/project/${pid}/dataset`, icon: 'Picture', label: '数据集' },
+    { path: `/project/${pid}/annotate`, icon: 'EditPen', label: '图片标注' },
+    { path: `/project/${pid}/train`, icon: 'Cpu', label: '模型训练' },
+    { path: `/project/${pid}/artifacts`, icon: 'Box', label: '制品管理' },
+    { path: `/project/${pid}/evaluate`, icon: 'DataAnalysis', label: '模型验证' },
+    { path: `/project/${pid}/test`, icon: 'View', label: '测试识别' },
+  ]
+})
 
 const applyTheme = (dark) => {
   document.documentElement.classList.toggle('dark', dark)
@@ -128,8 +179,6 @@ const activeMenu = computed(() => route.path)
 const handleProjectLoaded = (project) => {
   if (project) currentProject.value = project
 }
-
-const onMenuSelect = () => {}
 
 // 进入项目子页时加载工程信息
 watch(currentProjectId, async (newId) => {
@@ -236,6 +285,31 @@ loadSysInfo()
     align-items: center;
     gap: 10px;
 
+    .collapse-btn {
+      width: 28px;
+      height: 28px;
+      margin-left: 4px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--nav-text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+
+      &:hover {
+        background: var(--nav-bg-hover);
+        color: #fff;
+      }
+
+      &.collapsed {
+        color: var(--nav-text-active);
+        background: var(--nav-active-bg);
+      }
+    }
+
     .brand-mark {
       width: 26px;
       height: 26px;
@@ -275,8 +349,22 @@ loadSysInfo()
   width: 208px;
   flex: 0 0 208px;
   background: var(--nav-bg);
-  overflow-y: auto;
-  padding-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.1s ease, flex-basis 0.1s ease;
+
+  &.collapsed {
+    width: 64px;
+    flex-basis: 64px;
+  }
+
+  .nav-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+  }
 
   .nav-section-label {
     padding: 14px 16px 6px;
@@ -285,39 +373,119 @@ loadSysInfo()
     letter-spacing: 0.8px;
     text-transform: uppercase;
     color: #5c6470;
+    white-space: nowrap;
+    overflow: hidden;
   }
 
-  .nav-menu {
-    background: transparent;
-    border-right: none;
+  .nav-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 
-    :deep(.el-menu-item) {
-      height: 38px;
-      line-height: 38px;
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 40px;
       margin: 2px 8px;
-      border-radius: 4px;
-      color: #a7adb8;
+      padding: 0 10px;
+      border-radius: 6px;
+      color: var(--nav-text);
       font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      white-space: nowrap;
+      overflow: hidden;
 
       .el-icon {
-        color: #6b7380;
-        font-size: 15px;
+        flex: 0 0 auto;
+        color: var(--text-faint);
       }
 
       &:hover {
-        background: #262a33;
-        color: #d5d9e0;
+        background: var(--nav-bg-hover);
+        color: var(--text-1);
+
+        .el-icon { color: var(--nav-text-active); }
       }
 
-      &.is-active {
-        background: #25314f;
-        color: #6d9bff;
+      &.active {
+        background: var(--nav-active-bg);
+        color: var(--nav-text-active);
         font-weight: 500;
 
-        .el-icon {
-          color: #6d9bff;
+        .el-icon { color: var(--nav-text-active); }
+      }
+
+      &.nav-icon-only {
+        justify-content: center;
+        padding: 0;
+      }
+    }
+  }
+
+  .sidebar-footer {
+    flex: 0 0 auto;
+    padding: 10px 12px;
+    border-top: 1px solid var(--nav-border);
+    background: rgba(0, 0, 0, 0.12);
+
+    .org-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-radius: 6px;
+      padding: 6px 8px;
+      cursor: default;
+      transition: background 0.15s;
+
+      &:hover {
+        background: var(--nav-bg-hover);
+      }
+
+      .org-mark {
+        flex: 0 0 auto;
+        width: 30px;
+        height: 30px;
+        border-radius: 7px;
+        background: linear-gradient(135deg, #1f5aff, #0f9d58);
+        color: #fff;
+        font-size: 16px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .org-text {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+
+        .org-name {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--nav-text);
+          white-space: nowrap;
+        }
+
+        .org-sub {
+          font-size: 9px;
+          letter-spacing: 0.4px;
+          color: #5c6470;
+          white-space: nowrap;
+          overflow: hidden;
         }
       }
+    }
+
+    // 折叠：只显示标识方块
+    &.collapsed {
+      padding: 10px 0;
+      display: flex;
+      justify-content: center;
+
+      .org-badge { padding: 4px; }
     }
   }
 }

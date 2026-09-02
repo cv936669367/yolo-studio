@@ -13,20 +13,39 @@
           <span class="crumb-sep">›</span>
           <span class="crumb-file" :title="fileName">{{ fileName }}</span>
         </div>
-        <el-button-group>
-          <el-button :disabled="currentIndex === 0" @click="prevImage">
-            <el-icon><ArrowLeftBold /></el-icon>
-          </el-button>
-          <el-button :disabled="currentIndex >= images.length - 1" @click="nextImage">
-            <el-icon><ArrowRightBold /></el-icon>
-          </el-button>
-        </el-button-group>
-        <span class="image-counter mono">{{ currentIndex + 1 }} / {{ images.length }}</span>
+
+        <!-- 数据集筛选：全部 / Tr / Va / Te -->
+        <div class="filter-chips split-chips">
+          <div
+            v-for="s in splitFilters"
+            :key="s.value"
+            class="chip"
+            :class="{ active: splitFilter === s.value, [s.value]: true }"
+            @click="changeSplitFilter(s.value)"
+          >
+            {{ s.label }}
+            <span class="chip-count mono">{{ splitCount(s.value) }}</span>
+          </div>
+        </div>
+
+        <!-- 标注状态筛选：全部 / 已标注 / 未标注 -->
+        <div class="filter-chips anno-chips">
+          <div
+            v-for="a in annoStateFilters"
+            :key="a.value"
+            class="chip"
+            :class="{ active: annoStateFilter === a.value }"
+            @click="changeAnnoFilter(a.value)"
+          >
+            {{ a.label }}
+            <span class="chip-count mono">{{ annoStateCount(a.value) }}</span>
+          </div>
+        </div>
+
+        <span class="image-counter mono" v-if="viewImages.length">{{ currentIndex + 1 }} / {{ viewImages.length }}</span>
       </div>
       <div class="toolbar-center">
-        <span class="img-meta mono" v-if="currentImage">
-          {{ imageWidth }}×{{ imageHeight }}px · {{ annotations.length }} 标注
-        </span>
+        <!-- 尺寸/标注数已由左侧 GROUP 与 CLASSES 统计展示，此处留空保持对称 -->
       </div>
       <div class="toolbar-right">
         <el-tooltip content="撤销 (Ctrl+Z)">
@@ -52,16 +71,21 @@
       </div>
     </div>
 
-    <!-- Film strip: image thumbnails -->
-    <div class="film-strip" v-if="images.length">
+    <!-- Film strip: 当前筛选后的图片缩略图 -->
+    <div class="film-strip" v-if="viewImages.length">
       <div
-        v-for="(img, idx) in images"
+        v-for="(img, idx) in viewImages"
         :key="img.id"
         class="strip-item"
         :class="{ active: idx === currentIndex }"
-        @click="goToImage(idx)"
+        @click="currentIndex = idx"
       >
         <img :src="img.file_path" :alt="img.original_name" />
+        <!-- 数据集划分标记（右上角） -->
+        <span class="strip-split" :class="img.split">
+          {{ img.split === 'train' ? 'Tr' : (img.split === 'val' ? 'Va' : 'Te') }}
+        </span>
+        <!-- 标注数（右下角） -->
         <span class="strip-badge mono">{{ img.annotation_count || 0 }}</span>
       </div>
     </div>
@@ -102,14 +126,17 @@
             </div>
             <div class="info-row">
               <span class="info-label">分组</span>
-              <span class="info-value mono">{{ currentIndex + 1 }} / {{ images.length }}</span>
+              <span class="info-value mono">{{ currentIndex + 1 }} / {{ viewImages.length }}</span>
             </div>
           </div>
         </div>
 
         <!-- CLASSES -->
         <div class="panel-section">
-          <div class="panel-title">CLASSES</div>
+          <div class="panel-title-row">
+            <span class="panel-title">CLASSES</span>
+            <span class="title-stat mono">标注 {{ annotations.length }}</span>
+          </div>
           <div class="class-buttons">
             <div
               v-for="(cls, i) in project.classes"
@@ -177,14 +204,19 @@
         <div v-if="!currentImage" class="empty-canvas">
           <el-empty description="暂无图片" :image-size="80" />
         </div>
-        <div v-else class="canvas-wrapper" :style="{ transform: `scale(${zoom})` }">
+        <div
+          v-else
+          class="canvas-wrapper"
+          :class="currentTool === 'select' ? 'pan-cursor' : ''"
+          :style="{ transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${zoom})` }"
+          @mousedown="handleMouseDown"
+          @mousemove="handleMouseMove"
+          @mouseup="handleMouseUp"
+          @mouseleave="handleMouseLeave"
+        >
           <img
             ref="imageRef"
             :src="getImageUrl(currentImage)"
-            @mousedown="handleMouseDown"
-            @mousemove="handleMouseMove"
-            @mouseup="handleMouseUp"
-            @mouseleave="handleMouseLeave"
             @dblclick="handleDoubleClick"
             @contextmenu.prevent="handleRightClick($event)"
             draggable="false"
@@ -240,6 +272,7 @@
                 <g
                   v-for="h in rectHandles(anno.bbox)"
                   :key="h.key"
+                  data-handle
                   :transform="`translate(${toDisplayX(h.x)}, ${toDisplayY(h.y)})`"
                   @mousedown.stop.prevent="startResize(anno, h.key)"
                 >
@@ -252,10 +285,13 @@
                 <g
                   v-for="(pt, vi) in anno.points"
                   :key="vi"
+                  class="anno-vertex"
                   :transform="`translate(${toDisplayX(pt.x)}, ${toDisplayY(pt.y)})`"
                   @mousedown.stop.prevent="startVertexDrag(anno, vi)"
                 >
-                  <circle r="4" fill="#fff" stroke="#1f5aff" stroke-width="1.5" />
+                  <!-- 透明热区：扩大命中范围 -->
+                  <circle r="9" fill="transparent" />
+                  <circle r="4.5" fill="#fff" stroke="#1f5aff" stroke-width="1.8" />
                 </g>
               </g>
             </g>
@@ -298,6 +334,18 @@
                 fill="none"
                 stroke-dasharray="4,2"
               />
+              <!-- 橡皮筋预览线：最后一点 → 当前鼠标 -->
+              <line
+                v-if="polygonHover"
+                :x1="toDisplayX(polygonPoints[polygonPoints.length - 1].x)"
+                :y1="toDisplayY(polygonPoints[polygonPoints.length - 1].y)"
+                :x2="toDisplayX(polygonHover.x)"
+                :y2="toDisplayY(polygonHover.y)"
+                stroke="#1f5aff"
+                stroke-width="1.5"
+                stroke-dasharray="3,3"
+                opacity="0.8"
+              />
               <circle
                 v-for="(pt, i) in polygonPoints"
                 :key="i"
@@ -307,6 +355,16 @@
                 fill="#1f5aff"
                 stroke="#fff"
                 stroke-width="1"
+              />
+              <!-- 下一个点提示 -->
+              <circle
+                v-if="polygonHover"
+                :cx="toDisplayX(polygonHover.x)"
+                :cy="toDisplayY(polygonHover.y)"
+                r="2.5"
+                fill="none"
+                stroke="#1f5aff"
+                stroke-width="1.5"
               />
             </g>
 
@@ -378,6 +436,15 @@
           </div>
         </div>
 
+        <!-- 多边形编辑提示（选中 polygon 标注） -->
+        <div
+          v-if="selectedAnno && selectedAnno.anno_type === 'polygon'"
+          class="poly-edit-hint"
+        >
+          <el-icon :size="14"><EditPen /></el-icon>
+          <span>多边形编辑：拖动<b>白色圆点</b>调整顶点，完成后点击空白处或按 Esc 退出</span>
+        </div>
+
         <!-- Smart session hint -->
         <div v-if="currentTool === 'smart-point' && smartPoints.length" class="smart-hint">
           <span class="hint-pos">正 {{ positiveCount }}</span>
@@ -391,7 +458,7 @@
 
         <!-- 画布左右切换图片 -->
         <div
-          v-if="currentImage && images.length > 1"
+          v-if="currentImage && viewImages.length > 1"
           class="nav-arrow left"
           :class="{ disabled: currentIndex === 0 }"
           @click="prevImage"
@@ -399,9 +466,9 @@
           <el-icon :size="18"><ArrowLeftBold /></el-icon>
         </div>
         <div
-          v-if="currentImage && images.length > 1"
+          v-if="currentImage && viewImages.length > 1"
           class="nav-arrow right"
-          :class="{ disabled: currentIndex >= images.length - 1 }"
+          :class="{ disabled: currentIndex >= viewImages.length - 1 }"
           @click="nextImage"
         >
           <el-icon :size="18"><ArrowRightBold /></el-icon>
@@ -409,45 +476,61 @@
 
         <!-- Vertical tool bar (Roboflow style) -->
         <div class="vertical-toolbar">
-          <el-tooltip content="选择 / 移动 (V)" placement="left" :show-after="300">
-            <div class="tool-btn" :class="{ active: currentTool === 'select' }" @click="currentTool = 'select'">
-              <el-icon :size="17"><Pointer /></el-icon>
+          <el-tooltip
+            v-for="t in toolButtons"
+            :key="t.key"
+            placement="left"
+            :show-after="200"
+            popper-class="tool-tip-popper"
+          >
+            <template #content>
+              <div class="tt-box">
+                <div class="tt-title">
+                  <span>{{ t.title }}</span>
+                  <kbd v-if="t.shortcut">{{ t.shortcut }}</kbd>
+                  <el-tag v-if="t.badge" size="small" effect="dark" class="tt-badge">{{ t.badge }}</el-tag>
+                </div>
+                <div class="tt-desc">{{ t.desc }}</div>
+                <div v-if="t.usage" class="tt-usage">{{ t.usage }}</div>
+              </div>
+            </template>
+            <div
+              class="tool-btn"
+              :class="{
+                active: currentTool === t.key,
+                danger: t.danger,
+                disabled: t.danger && t.disabledCheck && t.disabledCheck(),
+              }"
+              @click="t.action ? t.action() : selectTool(t.key)"
+            >
+              <el-icon :size="17"><component :is="t.icon" /></el-icon>
             </div>
           </el-tooltip>
-          <el-tooltip content="智能框选 (D) — 画框圈住目标自动分割" placement="left" :show-after="300">
-            <div class="tool-btn" :class="{ active: currentTool === 'smart-box' }" @click="selectTool('smart-box')">
-              <el-icon :size="17"><Crop /></el-icon>
-            </div>
-          </el-tooltip>
-          <el-tooltip content="智能点选 (S) — 点击加区域 / 右键减区域 / 双击确认" placement="left" :show-after="300">
-            <div class="tool-btn" :class="{ active: currentTool === 'smart-point' }" @click="selectTool('smart-point')">
-              <el-icon :size="17"><MagicStick /></el-icon>
-            </div>
-          </el-tooltip>
-          <el-tooltip content="矩形框 (B) — 拖拽绘制" placement="left" :show-after="300">
-            <div class="tool-btn" :class="{ active: currentTool === 'rectangle' }" @click="currentTool = 'rectangle'">
-              <el-icon :size="17"><FullScreen /></el-icon>
-            </div>
-          </el-tooltip>
-          <el-tooltip content="套索 (L) — 自由圈选区域" placement="left" :show-after="300">
-            <div class="tool-btn" :class="{ active: currentTool === 'lasso' }" @click="currentTool = 'lasso'">
-              <el-icon :size="17"><Aim /></el-icon>
-            </div>
-          </el-tooltip>
-          <el-tooltip content="多边形 (P) — 点击描点，双击闭合" placement="left" :show-after="300">
-            <div class="tool-btn" :class="{ active: currentTool === 'polygon' }" @click="currentTool = 'polygon'">
-              <el-icon :size="17"><Edit /></el-icon>
-            </div>
-          </el-tooltip>
+
           <div class="tool-sep"></div>
-          <el-tooltip content="删除选中 (Delete)" placement="left" :show-after="300">
-            <div class="tool-btn danger" :class="{ disabled: !selectedAnno }" @click="deleteSelected">
-              <el-icon :size="17"><Delete /></el-icon>
-            </div>
-          </el-tooltip>
-          <el-tooltip content="清除全部标注" placement="left" :show-after="300">
-            <div class="tool-btn danger" :class="{ disabled: annotations.length === 0 }" @click="clearAllAnnotations">
-              <el-icon :size="17"><Broom /></el-icon>
+
+          <el-tooltip
+            v-for="t in actionButtons"
+            :key="t.key"
+            placement="left"
+            :show-after="200"
+            popper-class="tool-tip-popper"
+          >
+            <template #content>
+              <div class="tt-box">
+                <div class="tt-title">
+                  <span>{{ t.title }}</span>
+                  <kbd v-if="t.shortcut">{{ t.shortcut }}</kbd>
+                </div>
+                <div class="tt-desc">{{ t.desc }}</div>
+              </div>
+            </template>
+            <div
+              class="tool-btn danger"
+              :class="{ disabled: t.disabledCheck() }"
+              @click="t.action()"
+            >
+              <el-icon :size="17"><component :is="t.icon" /></el-icon>
             </div>
           </el-tooltip>
         </div>
@@ -480,6 +563,15 @@
                   ? `${Math.round((anno.bbox?.w || 0) * imageWidth)}×${Math.round((anno.bbox?.h || 0) * imageHeight)}`
                   : `${anno.points?.length || 0}点` }}
               </span>
+              <el-button
+                v-if="anno.anno_type === 'polygon'"
+                type="primary"
+                link
+                size="small"
+                @click.stop="selectedId = anno.id"
+              >
+                <el-icon><EditPen /></el-icon>
+              </el-button>
               <el-button type="danger" link size="small" @click.stop="removeAnnotation(idx)">删</el-button>
             </div>
           </div>
@@ -524,11 +616,129 @@ const redoStack = ref([])
 const aiLoading = ref(false)
 const smartLoading = ref(false)
 
+// ─── 垂直工具条按钮（含详细悬停说明）───
+const toolButtons = [
+  {
+    key: 'select', icon: 'Pointer', shortcut: 'V', title: '选择 / 移动',
+    desc: '点选标注进行编辑',
+    usage: '· 拖动已选框：移动位置\n· 拖动选中矩形手柄：调整大小\n· 选中多边形后拖动圆点：调整顶点\n· 空白处拖拽：平移画布（抓取光标）',
+  },
+  {
+    key: 'smart-box', icon: 'Crop', shortcut: 'D', title: '智能分割 · 框选',
+    desc: 'SAM 自动分割，画框圈住目标生成精确轮廓标注',
+    usage: '· 按住左键拖出矩形框圈住物体\n· 松开即分割并生成多边形轮廓标注\n· 需先下载 SAM 模型（约 375MB）',
+    badge: 'SAM',
+  },
+  {
+    key: 'smart-point', icon: 'MagicStick', shortcut: 'S', title: '智能分割 · 点选',
+    desc: '点击物体加区域、右键排除区域，SAM 联动分割',
+    usage: '· 左键点击：添加正点（扩大选中区域）\n· 右键点击：添加负点（挖除误选区域）\n· 回车 / ✓按钮：确认保存为多边形\n· Esc：取消本次会话',
+    badge: 'SAM',
+  },
+  {
+    key: 'rectangle', icon: 'FullScreen', shortcut: 'B', title: '矩形框',
+    desc: '拖拽绘制矩形检测框（Bounding Box）',
+    usage: '· 空白处按住左键拖拽绘制\n· 选中后拖动移动、拖 8 个手柄缩放',
+  },
+  {
+    key: 'lasso', icon: 'Aim', shortcut: 'L', title: '套索',
+    desc: 'PS 风格自由圈选，松手自动闭合',
+    usage: '· 按住左键沿物体边缘自由绘制\n· 松开闭合 → 矩形工程转外接框 / 多边形工程存自由轮廓',
+  },
+  {
+    key: 'polygon', icon: 'Edit', shortcut: 'P', title: '多边形',
+    desc: '逐点描出多边形轮廓',
+    usage: '· 每次点击添加一个顶点（有橡皮筋预览线）\n· 双击闭合完成\n· 选中后点列表「编辑」可拖动顶点微调',
+  },
+]
+
+const actionButtons = [
+  {
+    key: 'delete', icon: 'Delete', shortcut: 'Delete', title: '删除选中标注',
+    desc: '删除当前选中的标注（支持 Ctrl+Z 撤销）',
+    disabledCheck: () => !selectedAnno.value,
+    action: () => deleteSelected(),
+  },
+  {
+    key: 'clear', icon: 'DeleteFilled', title: '清除全部标注',
+    desc: '删除当前图片上的全部标注（有二次确认）',
+    disabledCheck: () => annotations.value.length === 0,
+    action: () => clearAllAnnotations(),
+  },
+]
+
+// ─── 筛选（顶部切换：数据集划分 + 标注状态）───
+const splitFilter = ref('all')
+const annoStateFilter = ref('all')
+
+const splitFilters = [
+  { label: '全部', value: 'all' },
+  { label: 'Tr 训练', value: 'train' },
+  { label: 'Va 验证', value: 'val' },
+  { label: 'Te 测试', value: 'test' },
+]
+const annoStateFilters = [
+  { label: '全部标注', value: 'all' },
+  { label: '已标注', value: 'annotated' },
+  { label: '未标注', value: 'unannotated' },
+]
+
+// 当前可导航图片 = 组合筛选结果
+const viewImages = computed(() => {
+  let list = images.value
+  if (splitFilter.value !== 'all') {
+    list = list.filter(i => i.split === splitFilter.value)
+  }
+  if (annoStateFilter.value === 'annotated') {
+    list = list.filter(i => i.annotation_count > 0)
+  } else if (annoStateFilter.value === 'unannotated') {
+    list = list.filter(i => !(i.annotation_count > 0))
+  }
+  return list
+})
+
+const splitCount = (v) => (v === 'all' ? images.value.length : images.value.filter(i => i.split === v).length)
+const annoStateCount = (v) => {
+  let list = images.value
+  if (splitFilter.value !== 'all') list = list.filter(i => i.split === splitFilter.value)
+  if (v === 'annotated') return list.filter(i => i.annotation_count > 0).length
+  if (v === 'unannotated') return list.filter(i => !(i.annotation_count > 0)).length
+  return list.length
+}
+
+// 切换数据集筛选：保留当前图（若在新列表），否则跳第一个
+const changeSplitFilter = (v) => {
+  const curId = currentImage.value?.id
+  splitFilter.value = v
+  relocate(curId)
+}
+
+// 切换标注状态筛选
+const changeAnnoFilter = (v) => {
+  const curId = currentImage.value?.id
+  annoStateFilter.value = v
+  relocate(curId)
+}
+
+// 定位到指定图（若在筛选结果中），否则第一个；空列表 -1
+const relocate = (targetId) => {
+  if (targetId) {
+    const idx = viewImages.value.findIndex(i => i.id === targetId)
+    if (idx >= 0) { currentIndex.value = idx; return }
+  }
+  currentIndex.value = viewImages.value.length ? 0 : -1
+}
+
 // Tool state
 const currentTool = ref('rectangle')
 const selectedClass = ref('')
 const zoom = ref(1)
 const imageLoaded = ref(false)
+
+// 画布平移（select 工具空白拖拽）
+const canvasPan = ref({ x: 0, y: 0 })
+const panning = ref(false)
+const panStart = ref(null) // {cx, cy, px, py}
 const imageWidth = ref(640)
 const imageHeight = ref(480)
 
@@ -541,6 +751,7 @@ const isDrawing = ref(false)
 const startPos = ref(null)
 const drawingRect = ref(null)
 const polygonPoints = ref([])
+const polygonHover = ref(null) // 多边形绘制时鼠标预览位置（归一化）
 
 // Lasso state
 const lassoPoints = ref([])
@@ -657,7 +868,7 @@ const removeTag = (t) => {
 const selectedAnno = computed(() => annotations.value.find(a => a.id === selectedId.value) || null)
 
 // Computed
-const currentImage = computed(() => images.value[currentIndex.value])
+const currentImage = computed(() => viewImages.value[currentIndex.value])
 const canUndo = computed(() => historyStack.value.length > 0)
 const canRedo = computed(() => redoStack.value.length > 0)
 
@@ -738,10 +949,11 @@ const loadImages = async () => {
     images.value = await imageApi.list(projectId.value)
     // 从数据集页跳转：定位到指定图片（query.image = 图片 id）
     const targetId = parseInt(route.query.image)
-    if (targetId && images.value.length) {
-      const idx = images.value.findIndex(i => i.id === targetId)
-      if (idx >= 0) currentIndex.value = idx
+    if (targetId) {
+      const idx = viewImages.value.findIndex(i => i.id === targetId)
+      if (idx >= 0) { currentIndex.value = idx; return }
     }
+    currentIndex.value = viewImages.value.length ? 0 : -1
   } catch (e) {}
 }
 
@@ -755,8 +967,7 @@ const loadAnnotations = async () => {
 
 // Navigation
 const prevImage = () => { if (currentIndex.value > 0) currentIndex.value-- }
-const nextImage = () => { if (currentIndex.value < images.value.length - 1) currentIndex.value++ }
-const goToImage = (idx) => { currentIndex.value = idx }
+const nextImage = () => { if (currentIndex.value < viewImages.value.length - 1) currentIndex.value++ }
 
 const fitZoom = () => {
   const img = imageRef.value
@@ -890,8 +1101,15 @@ const handleMouseDown = (e) => {
   // 3. 未命中 → 取消选中，开始绘制
   selectedId.value = null
 
-  // select 工具：只选择/移动，不绘制
-  if (currentTool.value === 'select') return
+  // select 工具：空白拖拽 = 平移画布（pan）
+  if (currentTool.value === 'select') {
+    panning.value = true
+    panStart.value = {
+      cx: e.clientX, cy: e.clientY,
+      px: canvasPan.value.x, py: canvasPan.value.y,
+    }
+    return
+  }
 
   if (currentTool.value === 'lasso') {
     lassoPoints.value = [pos]
@@ -927,6 +1145,15 @@ const handleMouseDown = (e) => {
 const handleMouseMove = (e) => {
   const pos = getImageCoords(e)
   if (!pos) return
+
+  // 画布平移（select 工具空白拖拽）
+  if (panning.value && panStart.value) {
+    canvasPan.value = {
+      x: panStart.value.px + (e.clientX - panStart.value.cx),
+      y: panStart.value.py + (e.clientY - panStart.value.cy),
+    }
+    return
+  }
 
   // 编辑移动
   if (editing.value?.type === 'move' && editing.value.anno.anno_type === 'rectangle') {
@@ -969,6 +1196,12 @@ const handleMouseMove = (e) => {
     return
   }
 
+  // 多边形绘制：橡皮筋预览线（记录鼠标位置，等下一次点击）
+  if (currentTool.value === 'polygon' && polygonPoints.value.length > 0) {
+    polygonHover.value = pos
+    return
+  }
+
   // 智能点选：拖拽检测（移动超阈值进入画框模式）
   if (currentTool.value === 'smart-point' && smartDownPos.value && !smartDragging.value) {
     const dx = pos.x - smartDownPos.value.x
@@ -994,6 +1227,13 @@ const handleMouseMove = (e) => {
 const clamp01 = (v) => Math.min(Math.max(v, 0), 1)
 
 const handleMouseUp = async () => {
+  // 平移结束
+  if (panning.value) {
+    panning.value = false
+    panStart.value = null
+    return
+  }
+
   // 编辑结束：保存
   if (editing.value) {
     const { anno, type } = editing.value
@@ -1162,6 +1402,10 @@ const handleMouseLeave = async () => {
     isDrawing.value = false
     await finishLasso()
   }
+  if (panning.value) {
+    panning.value = false
+    panStart.value = null
+  }
   resetDrawing()
 }
 
@@ -1179,14 +1423,17 @@ const startVertexDrag = (anno, vi) => {
   editing.value = { type: 'vertex', anno, vi }
 }
 
-// 更新标注到后端
+// 更新标注到后端（需完整字段，否则 422）
 const updateAnno = async (anno) => {
   try {
-    if (anno.anno_type === 'rectangle') {
-      await annotationApi.update(anno.id, { bbox: anno.bbox })
-    } else {
-      await annotationApi.update(anno.id, { points: anno.points })
+    const data = {
+      image_id: anno.image_id ?? currentImage.value?.id,
+      anno_type: anno.anno_type,
+      class_name: anno.class_name,
+      bbox: anno.bbox || null,
+      points: anno.points || null,
     }
+    await annotationApi.update(anno.id, data)
   } catch (e) {}
 }
 
@@ -1347,6 +1594,7 @@ watch(currentImage, async () => {
   editing.value = null
   imageTags.value = []
   cancelSmart()
+  canvasPan.value = { x: 0, y: 0 }
   imageLoaded.value = false
 
   if (currentImage.value) {
@@ -1475,6 +1723,55 @@ onUnmounted(() => {
       }
     }
 
+    .filter-chips {
+      display: flex;
+      gap: 2px;
+
+      .chip {
+        padding: 4px 10px;
+        font-size: 12px;
+        color: var(--text-2);
+        cursor: pointer;
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        transition: all 0.15s;
+        background: var(--bg-card);
+
+        &:hover {
+          border-color: var(--brand);
+          color: var(--brand);
+        }
+
+        &.active {
+          border-color: var(--brand);
+          color: #fff;
+          background: var(--brand);
+          font-weight: 600;
+
+          .chip-count { color: rgba(255, 255, 255, 0.85); }
+        }
+
+        .chip-count {
+          font-size: 10.5px;
+          color: var(--text-3);
+        }
+      }
+
+      // Tr/Va/Te 色点：非激活时颜色标识
+      &.split-chips .chip {
+        &.train { border-left: 2px solid #1f5aff; }
+        &.val { border-left: 2px solid #e6a23c; }
+        &.test { border-left: 2px solid #0f9d58; }
+
+        &.train.active { background: #1f5aff; border-left-color: #1f5aff; }
+        &.val.active { background: #e6a23c; border-left-color: #e6a23c; }
+        &.test.active { background: #0f9d58; border-left-color: #0f9d58; }
+      }
+    }
+
     .image-counter {
       font-size: 12px;
       color: var(--text-2);
@@ -1507,11 +1804,14 @@ onUnmounted(() => {
     border-radius: 4px;
     margin-bottom: 12px;
     flex: 0 0 auto;
+    contain: layout style; // 隔离自身布局，避免影响其他区域
 
     // 暗黑下缩略图底更贴近卡片
     html.dark & { background: var(--bg-fill); }
 
     .strip-item {
+      content-visibility: auto;
+      contain-intrinsic-size: 64px 48px;
       position: relative;
       width: 64px;
       height: 48px;
@@ -1530,6 +1830,23 @@ onUnmounted(() => {
 
       &.active {
         border-color: #1f5aff;
+      }
+
+      // 数据集划分标记（右上角）
+      .strip-split {
+        position: absolute;
+        top: 1px;
+        right: 1px;
+        font-size: 8.5px;
+        font-weight: 700;
+        padding: 1px 4px;
+        border-radius: 2px;
+        color: #fff;
+        letter-spacing: 0.3px;
+
+        &.train { background: #1f5aff; }
+        &.val { background: #e6a23c; }
+        &.test { background: #0f9d58; }
       }
 
       .strip-badge {
@@ -1558,6 +1875,25 @@ onUnmounted(() => {
     .panel-section {
       padding: 12px;
       border-bottom: 1px solid var(--border);
+
+      .panel-title-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 8px;
+
+        .panel-title {
+          margin-bottom: 0;
+        }
+
+        .title-stat {
+          font-size: 10.5px;
+          color: var(--text-3);
+          background: var(--bg-fill);
+          padding: 1px 7px;
+          border-radius: 8px;
+        }
+      }
 
       .panel-title {
         font-size: 11px;
@@ -1737,6 +2073,14 @@ onUnmounted(() => {
     .canvas-wrapper {
       position: relative;
       transform-origin: top left;
+      contain: layout style; // 隔离：避免画布布局/样式计算影响全局（主题/折叠时）
+      transform: translateZ(0); // 独立合成层：主题切换时图片/标注层不参与整页重绘
+
+      &.pan-cursor {
+        cursor: grab;
+
+        &:active { cursor: grabbing; }
+      }
 
       .annotation-image {
         max-width: 100%;
@@ -1754,13 +2098,25 @@ onUnmounted(() => {
         width: 100%;
         height: 100%;
         pointer-events: none;
+        will-change: transform;
 
         .anno-shape {
           pointer-events: none;
         }
 
-        .anno-shape g[data-handle] {
+        .anno-shape g[data-handle],
+        .anno-shape g.anno-vertex {
           pointer-events: auto;
+          cursor: move;
+        }
+
+        .anno-shape g.anno-vertex circle {
+          transition: r 0.12s;
+        }
+
+        .anno-shape g.anno-vertex:hover circle {
+          r: 6;
+          stroke-width: 2;
         }
       }
     }
@@ -1856,6 +2212,29 @@ onUnmounted(() => {
       }
     }
 
+    // ─── 多边形编辑提示 ───
+    .poly-edit-hint {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(20, 22, 26, 0.85);
+      color: #d5d9e0;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 5px;
+      padding: 6px 14px;
+      font-size: 12px;
+      z-index: 15;
+      white-space: nowrap;
+
+      b { color: #fff; }
+
+      .el-icon { color: #8fabff; }
+    }
+
     // ─── 智能会话提示条 ───
     .smart-hint {
       position: absolute;
@@ -1892,38 +2271,63 @@ onUnmounted(() => {
       z-index: 10;
 
       .tool-btn {
-        width: 34px;
-        height: 34px;
+        position: relative;
+        width: 36px;
+        height: 36px;
         display: flex;
         align-items: center;
         justify-content: center;
-        border-radius: 4px;
+        border-radius: 6px;
         color: #b8bdc7;
         cursor: pointer;
-        transition: background 0.12s, color 0.12s;
+        transition: background 0.15s, color 0.15s, transform 0.1s;
+
+        .el-icon {
+          transition: transform 0.15s;
+        }
 
         &:hover {
-          background: rgba(255, 255, 255, 0.1);
+          background: rgba(255, 255, 255, 0.12);
           color: #fff;
+
+          .el-icon { transform: scale(1.15); }
         }
 
+        // 激活：左侧指示条 + 蓝色高亮
         &.active {
-          background: #1f5aff;
+          background: linear-gradient(135deg, #1f5aff, #4c78ff);
           color: #fff;
+          box-shadow: 0 2px 8px rgba(31, 90, 255, 0.35);
+
+          &::before {
+            content: '';
+            position: absolute;
+            left: -4px;
+            top: 8px;
+            bottom: 8px;
+            width: 3px;
+            border-radius: 2px;
+            background: #6d9bff;
+          }
         }
 
-        &.danger:hover {
-          background: rgba(229, 72, 77, 0.25);
-          color: #ff7875;
+        &.danger:hover:not(.disabled) {
+          background: rgba(229, 72, 77, 0.28);
+          color: #ff8a85;
+          box-shadow: 0 2px 8px rgba(229, 72, 77, 0.25);
+
+          .el-icon { transform: scale(1.12); }
         }
 
         &.disabled {
-          opacity: 0.35;
+          opacity: 0.32;
           cursor: not-allowed;
 
           &:hover {
             background: transparent;
             color: #b8bdc7;
+
+            .el-icon { transform: none; }
           }
         }
       }
