@@ -1452,22 +1452,22 @@ onUnmounted(() => {
       padding: 0 4px;
 
       .crumb-project {
-        color: #4e5969;
+        color: var(--text-2);
         font-weight: 500;
       }
 
       .crumb-sep {
-        color: #c9cdd4;
+        color: var(--text-faint);
       }
 
       .crumb-page {
-        color: #1f2329;
+        color: var(--text-1);
         font-weight: 700;
         letter-spacing: 0.5px;
       }
 
       .crumb-file {
-        color: #86909c;
+        color: var(--text-3);
         max-width: 200px;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -1477,15 +1477,15 @@ onUnmounted(() => {
 
     .image-counter {
       font-size: 12px;
-      color: #4e5969;
-      background: #f2f3f5;
+      color: var(--text-2);
+      background: var(--bg-fill);
       padding: 3px 10px;
       border-radius: 3px;
     }
 
     .img-meta {
       font-size: 12px;
-      color: #86909c;
+      color: var(--text-3);
     }
   }
 
@@ -1502,11 +1502,14 @@ onUnmounted(() => {
     gap: 6px;
     overflow-x: auto;
     padding: 8px 4px;
-    background: #fff;
-    border: 1px solid #e5e6eb;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 4px;
     margin-bottom: 12px;
     flex: 0 0 auto;
+
+    // 暗黑下缩略图底更贴近卡片
+    html.dark & { background: var(--bg-fill); }
 
     .strip-item {
       position: relative;
@@ -1546,21 +1549,21 @@ onUnmounted(() => {
   .image-panel {
     width: 200px;
     flex: 0 0 200px;
-    background: #fff;
-    border: 1px solid #e5e6eb;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 4px;
     overflow-y: auto;
     padding-bottom: 8px;
 
     .panel-section {
       padding: 12px;
-      border-bottom: 1px solid #f2f3f5;
+      border-bottom: 1px solid var(--border);
 
       .panel-title {
         font-size: 11px;
         font-weight: 700;
         letter-spacing: 0.8px;
-        color: #86909c;
+        color: var(--text-2);
         margin-bottom: 8px;
       }
 
@@ -1571,8 +1574,8 @@ onUnmounted(() => {
         .summary-item {
           flex: 1;
           text-align: center;
-          background: #f7f8fa;
-          border: 1px solid #f2f3f5;
+          background: var(--bg-fill);
+          border: 1px solid var(--border-light);
           border-radius: 4px;
           padding: 6px 0;
 
@@ -1580,12 +1583,12 @@ onUnmounted(() => {
             display: block;
             font-size: 16px;
             font-weight: 700;
-            color: #1f2329;
+            color: var(--text-1);
           }
 
           .summary-label {
             font-size: 10px;
-            color: #86909c;
+            color: var(--text-3);
           }
         }
       }
@@ -1593,11 +1596,11 @@ onUnmounted(() => {
       .unused-classes {
         margin-top: 8px;
         padding-top: 8px;
-        border-top: 1px dashed #e5e6eb;
+        border-top: 1px dashed var(--border);
 
         .unused-title {
           font-size: 11px;
-          color: #86909c;
+          color: var(--text-3);
           margin-bottom: 5px;
         }
 
@@ -1609,17 +1612,17 @@ onUnmounted(() => {
           border-radius: 3px;
           cursor: pointer;
           font-size: 12px;
-          color: #86909c;
+          color: var(--text-3);
 
-          &:hover { background: #f7f8fa; color: #1f2329; }
+          &:hover { background: var(--bg-fill); color: var(--text-1); }
 
           .class-name { flex: 1; }
 
           kbd {
             font-size: 10px;
-            color: #c9cdd4;
-            background: #f2f3f5;
-            border: 1px solid #e5e6eb;
+            color: var(--text-faint);
+            background: var(--bg-fill);
+            border: 1px solid var(--border);
             border-radius: 3px;
             padding: 0 4px;
             font-family: inherit;
@@ -1638,9 +1641,9 @@ onUnmounted(() => {
           gap: 8px;
           font-size: 12px;
 
-          .info-label { color: #86909c; flex: 0 0 auto; }
+          .info-label { color: var(--text-3); flex: 0 0 auto; }
           .info-value {
-            color: #1f2329;
+            color: var(--text-1);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -1658,14 +1661,14 @@ onUnmounted(() => {
           align-items: center;
           gap: 7px;
           padding: 5px 8px;
-          border: 1px solid #e5e6eb;
+          border: 1px solid var(--border);
           border-radius: 4px;
           cursor: pointer;
           font-size: 12px;
           transition: border-color 0.15s;
 
           &:hover { border-color: #b8c7ff; }
-          &.active { background: #f5f8ff; }
+          &.active { background: var(--brand-soft); }
 
           .class-dot {
             width: 10px;
@@ -1674,14 +1677,14 @@ onUnmounted(() => {
             flex: 0 0 auto;
           }
 
-          .class-name { flex: 1; color: #1f2329; }
-          .class-count { color: #86909c; font-size: 11px; }
+          .class-name { flex: 1; color: var(--text-1); }
+          .class-count { color: var(--text-3); font-size: 11px; }
 
           kbd {
             font-size: 10px;
-            color: #86909c;
-            background: #f2f3f5;
-            border: 1px solid #e5e6eb;
+            color: var(--text-3);
+            background: var(--bg-fill);
+            border: 1px solid var(--border);
             border-radius: 3px;
             padding: 0 4px;
             font-family: inherit;
@@ -1692,7 +1695,7 @@ onUnmounted(() => {
       .tag-box {
         .no-tags {
           font-size: 12px;
-          color: #c9cdd4;
+          color: var(--text-faint);
           margin-bottom: 8px;
         }
 
@@ -1715,7 +1718,7 @@ onUnmounted(() => {
     .panel-empty {
       padding: 14px 0;
       text-align: center;
-      color: #c9cdd4;
+      color: var(--text-faint);
       font-size: 12px;
     }
   }
@@ -1767,6 +1770,22 @@ onUnmounted(() => {
       bottom: 12px;
       left: 50%;
       transform: translateX(-50%);
+      background: rgba(20, 22, 26, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 5px;
+      padding: 3px;
+      backdrop-filter: blur(4px);
+
+      :deep(.el-button) {
+        background: transparent;
+        border-color: transparent;
+        color: #d5d9e0;
+
+        &:hover {
+          background: rgba(255, 255, 255, 0.14);
+          color: #fff;
+        }
+      }
 
       .zoom-pct {
         min-width: 56px;
@@ -1854,7 +1873,7 @@ onUnmounted(() => {
 
       .hint-pos { color: #0f9d58; font-weight: 600; }
       .hint-neg { color: #e5484d; font-weight: 600; }
-      .hint-action { color: #86909c; }
+      .hint-action { color: var(--text-3); }
     }
 
     // ─── 垂直工具条（Roboflow 风格）───
@@ -1942,7 +1961,7 @@ onUnmounted(() => {
     .tool-tip {
       margin-top: 8px;
       font-size: 11px;
-      color: #86909c;
+      color: var(--text-3);
       line-height: 1.5;
     }
 
@@ -1963,8 +1982,8 @@ onUnmounted(() => {
         cursor: pointer;
         font-size: 12px;
 
-        &:hover { background: #f7f8fa; }
-        &.active { border-color: #1f5aff; background: #f5f8ff; }
+        &:hover { background: var(--bg-fill); }
+        &.active { border-color: #1f5aff; background: var(--brand-soft); }
 
         .class-dot {
           width: 8px;
@@ -1985,7 +2004,7 @@ onUnmounted(() => {
           }
         }
 
-        .anno-size { color: #86909c; font-size: 11px; flex: 0 0 auto; }
+        .anno-size { color: var(--text-3); font-size: 11px; flex: 0 0 auto; }
       }
     }
 
@@ -1994,14 +2013,14 @@ onUnmounted(() => {
       flex-direction: column;
       gap: 5px;
       font-size: 12px;
-      color: #4e5969;
+      color: var(--text-2);
 
       kbd {
         display: inline-block;
         font-size: 10px;
-        color: #4e5969;
-        background: #f2f3f5;
-        border: 1px solid #e5e6eb;
+        color: var(--text-2);
+        background: var(--bg-fill);
+        border: 1px solid var(--border);
         border-radius: 3px;
         padding: 0 5px;
         font-family: inherit;
@@ -2011,7 +2030,7 @@ onUnmounted(() => {
     .panel-empty {
       padding: 14px 0;
       text-align: center;
-      color: #c9cdd4;
+      color: var(--text-faint);
       font-size: 12px;
     }
   }

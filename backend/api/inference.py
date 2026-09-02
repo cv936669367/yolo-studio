@@ -60,6 +60,12 @@ async def predict_image(
             local_best = settings.OUTPUT_DIR / str(run.project_id) / f"run_{run_id}" / "weights" / "best.pt"
             if local_best.exists():
                 model_path = str(local_best)
+            else:
+                # 训练记录存在但权重文件缺失：不要静默回退到基线（会导致模型类型错乱）
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"训练模型权重缺失 (run {run_id})，请重新训练后再推理",
+                )
 
     start_time = time.time()
     model = _load_model(model_path)
@@ -85,12 +91,44 @@ async def predict_image(
 
     detections = []
     names = model.names
+
+    def _simplify(points, min_dist=0.006, max_points=120):
+        if len(points) <= 3:
+            return points
+        out = [points[0]]
+        for p in points[1:]:
+            dx = p[0] - out[-1][0]
+            dy = p[1] - out[-1][1]
+            if dx * dx + dy * dy >= min_dist * min_dist:
+                out.append(p)
+        if len(out) > max_points:
+            step = len(out) / max_points
+            out = [out[int(i * step)] for i in range(max_points)]
+        return out
+
     for r in results:
-        for box in r.boxes:
+        # 分割模型：每框附带归一化轮廓点（masks.xy 像素坐标 → 归一化）
+        masks_xy = None
+        if r.masks is not None and len(r.masks):
+            masks_xy = []
+            for m in r.masks:
+                if m.xy:
+                    masks_xy.append(max(m.xy, key=len))  # 每 mask 取最大轮廓环
+
+        for i, box in enumerate(r.boxes):
             xyxy = box.xyxy[0].tolist()
             cls_id = int(box.cls[0])
             conf = float(box.conf[0])
             class_name = names.get(cls_id, f"class_{cls_id}")
+
+            segment = None
+            if masks_xy is not None and i < len(masks_xy):
+                poly_px = masks_xy[i]
+                if len(poly_px) >= 3:
+                    norm = [[p[0] / img_width, p[1] / img_height] for p in poly_px]
+                    simp = _simplify(norm)
+                    segment = [{"x": round(p[0], 6), "y": round(p[1], 6)} for p in simp]
+
             detections.append(DetectionResult(
                 class_name=class_name,
                 confidence=round(conf, 4),
@@ -100,6 +138,7 @@ async def predict_image(
                     "x2": round(xyxy[2], 2),
                     "y3": round(xyxy[3], 2),
                 },
+                segment=segment,
             ))
 
     inference_time = (time.time() - start_time) * 1000

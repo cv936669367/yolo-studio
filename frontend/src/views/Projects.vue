@@ -291,8 +291,8 @@ onMounted(() => {
   gap: 14px;
 
   .project-card {
-    background: #fff;
-    border: 1px solid #e5e6eb;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 4px;
     padding: 16px;
     cursor: pointer;
@@ -312,7 +312,7 @@ onMounted(() => {
       .project-name {
         font-size: 15px;
         font-weight: 600;
-        color: #1f2329;
+        color: var(--text-1);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -322,7 +322,7 @@ onMounted(() => {
     .project-desc {
       margin-top: 8px;
       font-size: 12px;
-      color: #4e5969;
+      color: var(--text-2);
       line-height: 1.5;
       min-height: 32px;
       display: -webkit-box;
@@ -331,7 +331,7 @@ onMounted(() => {
       overflow: hidden;
 
       &.empty {
-        color: #c9cdd4;
+        color: var(--text-faint);
       }
     }
 
@@ -340,8 +340,8 @@ onMounted(() => {
       gap: 28px;
       margin: 14px 0;
       padding: 10px 0;
-      border-top: 1px solid #f2f3f5;
-      border-bottom: 1px solid #f2f3f5;
+      border-top: 1px solid var(--border-light);
+      border-bottom: 1px solid var(--border-light);
 
       .stat {
         display: flex;
@@ -351,13 +351,13 @@ onMounted(() => {
         .stat-num {
           font-size: 17px;
           font-weight: 700;
-          color: #1f2329;
+          color: var(--text-1);
           font-variant-numeric: tabular-nums;
         }
 
         .stat-label {
           font-size: 12px;
-          color: #86909c;
+          color: var(--text-3);
         }
       }
     }
@@ -369,7 +369,7 @@ onMounted(() => {
 
       .created {
         font-size: 12px;
-        color: #86909c;
+        color: var(--text-3);
         font-variant-numeric: tabular-nums;
       }
 
@@ -382,7 +382,7 @@ onMounted(() => {
 
   .empty-state {
     grid-column: 1 / -1;
-    background: #fff;
+    background: var(--bg-card);
     border: 1px dashed #d9dde3;
     border-radius: 4px;
     padding: 40px 0;

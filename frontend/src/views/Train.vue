@@ -33,7 +33,9 @@
                 @click="selectedModel = model.id"
               >
                 <div class="model-card-top">
-                  <div class="model-name">{{ model.name }}</div>
+                  <el-tooltip :content="model.name" placement="top">
+                    <div class="model-name">{{ model.name }}</div>
+                  </el-tooltip>
                   <div class="model-tag">
                     <el-tag v-if="model.downloaded" type="success" size="small" effect="plain">已下载</el-tag>
                     <el-tag v-else size="small" effect="plain">{{ model.size_mb }} MB</el-tag>
@@ -477,12 +479,12 @@ onUnmounted(() => {
     h2 {
       font-size: 22px;
       font-weight: 600;
-      color: #1a1d27;
+      color: var(--text-1);
       margin-bottom: 4px;
     }
     
     p {
-      color: #666;
+      color: var(--text-3);
       font-size: 14px;
     }
   }
@@ -494,7 +496,7 @@ onUnmounted(() => {
       font-size: 11px;
       font-weight: 700;
       letter-spacing: 0.8px;
-      color: #86909c;
+      color: var(--text-3);
       margin-bottom: 8px;
     }
   }
@@ -531,7 +533,7 @@ onUnmounted(() => {
         .model-name {
           font-weight: 600;
           font-size: 14px;
-          color: #1f2329;
+          color: var(--text-1);
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -546,7 +548,7 @@ onUnmounted(() => {
 
       .model-desc {
         font-size: 11px;
-        color: #86909c;
+        color: var(--text-3);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -560,7 +562,7 @@ onUnmounted(() => {
 
   .dl-hint {
     font-size: 12px;
-    color: #86909c;
+    color: var(--text-3);
   }
   
   .log-area {

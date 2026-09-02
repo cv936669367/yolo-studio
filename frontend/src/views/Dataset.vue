@@ -70,12 +70,40 @@
           </div>
         </div>
 
+        <!-- 批量操作条 -->
+        <div class="bulk-bar">
+          <el-checkbox
+            :model-value="allSelectedInView"
+            :indeterminate="someSelectedInView"
+            @change="toggleSelectAll"
+            class="select-all"
+          >全选</el-checkbox>
+          <span class="bulk-count" :class="{ has: selectedIds.length }">
+            <template v-if="selectedIds.length">已选 <b class="mono">{{ selectedIds.length }}</b> 张</template>
+            <template v-else>点击图片左上角勾选进行批量操作</template>
+          </span>
+          <div class="bulk-actions">
+            <el-button v-if="selectedIds.length" size="small" @click="clearSelection">清除</el-button>
+            <el-popconfirm
+              v-if="selectedIds.length"
+              :title="`确定删除选中的 ${selectedIds.length} 张图片？标注将一并删除`"
+              width="240"
+              @confirm="batchDeleteSelected"
+            >
+              <template #reference>
+                <el-button size="small" type="danger">删除选中 ({{ selectedIds.length }})</el-button>
+              </template>
+            </el-popconfirm>
+          </div>
+        </div>
+
         <!-- 图片网格 -->
         <div v-loading="loading" class="image-grid">
           <div
             v-for="img in pagedImages"
             :key="img.id"
             class="img-card"
+            :class="{ selected: isSelected(img.id) }"
             @click="goAnnotate(img.id)"
           >
             <!-- 划分色条 -->
@@ -88,6 +116,17 @@
                 preview-teleported
                 class="thumb"
               />
+              <!-- 单选 checkbox（左上角） -->
+              <span
+                class="select-box"
+                :class="{ checked: isSelected(img.id) }"
+                @click.stop="toggleSelect(img.id)"
+                @dblclick.stop
+              >
+                <el-icon v-if="isSelected(img.id)" :size="11"><Check /></el-icon>
+              </span>
+              <!-- 选中遮罩 -->
+              <span v-if="isSelected(img.id)" class="selected-mask"></span>
               <!-- 标注状态角标 -->
               <span
                 class="anno-badge"
@@ -272,6 +311,55 @@ const annoFilter = ref('all') // all | annotated | unannotated
 const PAGE_SIZE = 24
 const visibleCount = ref(PAGE_SIZE)
 
+// ─── 批量选择状态 ─────────────────────────────
+const selectedIds = ref([]) // 跨筛选保留
+
+const isSelected = (id) => selectedIds.value.includes(id)
+
+const toggleSelect = (id) => {
+  const i = selectedIds.value.indexOf(id)
+  if (i >= 0) selectedIds.value.splice(i, 1)
+  else selectedIds.value.push(id)
+}
+
+// 全选状态：当前筛选视图内
+const allSelectedInView = computed(() => {
+  const view = filteredImages.value
+  return view.length > 0 && view.every(img => selectedIds.value.includes(img.id))
+})
+
+const someSelectedInView = computed(() => {
+  const view = filteredImages.value
+  return view.some(img => selectedIds.value.includes(img.id)) && !allSelectedInView.value
+})
+
+// 全选 / 取消全选（作用于当前筛选视图）
+const toggleSelectAll = () => {
+  if (allSelectedInView.value) {
+    const viewIds = new Set(filteredImages.value.map(img => img.id))
+    selectedIds.value = selectedIds.value.filter(id => !viewIds.has(id))
+  } else {
+    for (const img of filteredImages.value) {
+      if (!selectedIds.value.includes(img.id)) selectedIds.value.push(img.id)
+    }
+  }
+}
+
+const clearSelection = () => { selectedIds.value = [] }
+
+// 批量删除选中（用户主动操作）
+const batchDeleteSelected = async () => {
+  if (!selectedIds.value.length) return
+  try {
+    const res = await imageApi.batchDelete([...selectedIds.value])
+    ElMessage.success(res.message || `已删除 ${selectedIds.value.length} 张图片`)
+    selectedIds.value = []
+    loadImages()
+  } catch (e) {
+    // interceptor handles error
+  }
+}
+
 // Tabs
 const tabs = [
   { label: '全部', value: 'all' },
@@ -455,8 +543,8 @@ onMounted(() => {
   // ─── 统计条 ──────────────────────────────
   .stats-bar {
     display: flex;
-    background: #fff;
-    border: 1px solid #e5e6eb;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 4px;
     margin-bottom: 14px;
     overflow: hidden;
@@ -465,18 +553,18 @@ onMounted(() => {
       flex: 1;
       text-align: center;
       padding: 12px 0;
-      border-right: 1px solid #f2f3f5;
+      border-right: 1px solid var(--border-light);
 
       .stat-num {
         display: block;
         font-size: 20px;
         font-weight: 700;
-        color: #1f2329;
+        color: var(--text-1);
       }
 
       .stat-label {
         font-size: 11px;
-        color: #86909c;
+        color: var(--text-3);
         margin-top: 2px;
       }
     }
@@ -493,21 +581,21 @@ onMounted(() => {
   .grid-panel {
     flex: 1;
     min-width: 0;
-    background: #fff;
-    border: 1px solid #e5e6eb;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 4px;
     padding: 14px;
 
     .filter-tabs {
       display: flex;
       gap: 2px;
-      border-bottom: 1px solid #e5e6eb;
+      border-bottom: 1px solid var(--border);
       margin-bottom: 4px;
 
       .tab {
         padding: 8px 14px;
         font-size: 13px;
-        color: #4e5969;
+        color: var(--text-2);
         cursor: pointer;
         border-bottom: 2px solid transparent;
         margin-bottom: -1px;
@@ -525,7 +613,7 @@ onMounted(() => {
 
         .tab-count {
           font-size: 11px;
-          color: #86909c;
+          color: var(--text-3);
           background: #f2f3f5;
           border-radius: 8px;
           padding: 0 6px;
@@ -541,9 +629,9 @@ onMounted(() => {
       .tab {
         padding: 4px 12px;
         font-size: 12px;
-        color: #86909c;
+        color: var(--text-3);
         cursor: pointer;
-        border: 1px solid #e5e6eb;
+        border: 1px solid var(--border);
         border-radius: 12px;
         display: flex;
         align-items: center;
@@ -561,8 +649,45 @@ onMounted(() => {
 
         .tab-count {
           font-size: 10px;
-          color: #86909c;
+          color: var(--text-3);
         }
+      }
+    }
+
+    // ─── 批量操作条 ────────────────────────────
+    .bulk-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      margin: 8px 0 12px;
+      background: var(--bg-fill);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+
+      .select-all {
+        flex: 0 0 auto;
+      }
+
+      .bulk-count {
+        flex: 1;
+        font-size: 12px;
+        color: var(--text-faint);
+
+        &.has {
+          color: var(--text-1);
+
+          b {
+            color: #1f5aff;
+            font-size: 14px;
+          }
+        }
+      }
+
+      .bulk-actions {
+        display: flex;
+        gap: 6px;
+        flex: 0 0 auto;
       }
     }
 
@@ -573,16 +698,21 @@ onMounted(() => {
       min-height: 200px;
 
       .img-card {
-        border: 1px solid #e5e6eb;
+        border: 1px solid var(--border);
         border-radius: 4px;
         overflow: hidden;
-        background: #fff;
+        background: var(--bg-card);
         cursor: pointer;
         transition: border-color 0.15s, box-shadow 0.15s;
 
         &:hover {
           border-color: #1f5aff;
           box-shadow: 0 1px 4px rgba(31, 90, 255, 0.12);
+        }
+
+        &.selected {
+          border-color: #1f5aff;
+          box-shadow: 0 0 0 1px #1f5aff;
         }
 
         .split-bar {
@@ -606,6 +736,42 @@ onMounted(() => {
               height: 100%;
               object-fit: cover;
             }
+          }
+
+          // 单选 checkbox（左上角）
+          .select-box {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            width: 18px;
+            height: 18px;
+            border: 1.5px solid #fff;
+            border-radius: 3px;
+            background: rgba(0, 0, 0, 0.35);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            cursor: pointer;
+            z-index: 6;
+            transition: background 0.15s;
+
+            &:hover {
+              background: rgba(31, 90, 255, 0.8);
+            }
+
+            &.checked {
+              background: #1f5aff;
+              border-color: #1f5aff;
+            }
+          }
+
+          // 选中遮罩
+          .selected-mask {
+            position: absolute;
+            inset: 0;
+            background: rgba(31, 90, 255, 0.12);
+            pointer-events: none;
           }
 
           // 标注状态角标
@@ -640,7 +806,7 @@ onMounted(() => {
 
           .img-name {
             font-size: 12px;
-            color: #1f2329;
+            color: var(--text-1);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -650,7 +816,7 @@ onMounted(() => {
             font-size: 11px;
 
             &.anno-done { color: #0f9d58; font-weight: 600; }
-            &.anno-none { color: #a9aeb8; }
+            &.anno-none { color: var(--text-faint); }
           }
 
           .img-opts {
@@ -679,12 +845,12 @@ onMounted(() => {
       justify-content: center;
       gap: 14px;
       padding: 14px 0 2px;
-      border-top: 1px solid #f2f3f5;
+      border-top: 1px solid var(--border-light);
       margin-top: 12px;
 
       .footer-info {
         font-size: 12px;
-        color: #86909c;
+        color: var(--text-3);
       }
     }
   }
@@ -711,7 +877,7 @@ onMounted(() => {
 
         .upload-label {
           font-size: 12px;
-          color: #4e5969;
+          color: var(--text-2);
           white-space: nowrap;
         }
 
@@ -731,7 +897,7 @@ onMounted(() => {
       margin-top: 10px;
       max-height: 140px;
       overflow-y: auto;
-      border: 1px solid #f2f3f5;
+      border: 1px solid var(--border-light);
       border-radius: 3px;
       padding: 4px 8px;
 
@@ -751,7 +917,7 @@ onMounted(() => {
 
         .remove-btn {
           cursor: pointer;
-          color: #86909c;
+          color: var(--text-3);
           &:hover { color: #e5484d; }
         }
       }
@@ -782,7 +948,7 @@ onMounted(() => {
     .tip-text {
       margin-top: 10px;
       font-size: 11px;
-      color: #86909c;
+      color: var(--text-3);
       text-align: center;
     }
 

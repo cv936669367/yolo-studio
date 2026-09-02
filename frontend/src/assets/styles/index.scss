@@ -1,26 +1,104 @@
 // YOLO Studio — Global Styles
-// 严谨、紧凑、工业风。去 AI 味：无渐变、无大圆角、无花哨阴影。
+// 严谨、紧凑、工业风。支持明亮 / 暗黑双主题（html.dark 切换）
 
+// ─── 主题变量（设计变量，供全局与各页面 scoped 使用）────────
 :root {
-  // Element Plus 主题变量覆盖
-  --el-color-primary: #1f5aff;
+  // 品牌
+  --brand: #1f5aff;
+  --brand-hover: #3d6bff;
+  --brand-soft: #eef3ff;
+
+  // 语义色（两主题通用）
+  --ok: #0f9d58;
+  --warn: #e6a23c;
+  --danger: #e5484d;
+  --purple: #7c3aed;
+
+  // 明亮主题（默认）
+  --bg-page: #f5f6f8;
+  --bg-card: #ffffff;
+  --bg-fill: #f7f8fa;      // 次级填充（表头、斑马、悬停）
+  --bg-hover: #fafbfc;
+  --border: #e5e6eb;
+  --border-light: #f2f3f5;
+
+  --text-1: #1f2329;
+  --text-2: #4e5969;
+  --text-3: #86909c;
+  --text-faint: #a9aeb8;
+
+  // 侧边栏/顶栏（骨架深色固定）
+  --nav-bg: #1b1e25;
+  --nav-bg-hover: #262a33;
+  --nav-text: #a7adb8;
+  --nav-text-active: #6d9bff;
+  --nav-active-bg: #25314f;
+  --nav-border: #26282f;
+
+  // 画布（标注/测试图片区）
+  --canvas-bg: #14161a;
+
+  // Element Plus 主题变量（明亮）
+  --el-color-primary: var(--brand);
   --el-color-primary-light-3: #5b85ff;
   --el-color-primary-light-5: #8fabff;
   --el-color-primary-light-7: #c3d4ff;
   --el-color-primary-light-8: #dbe5ff;
-  --el-color-primary-light-9: #eef3ff;
+  --el-color-primary-light-9: var(--brand-soft);
   --el-color-primary-dark-2: #1948cc;
   --el-border-radius-base: 4px;
   --el-border-radius-small: 3px;
   --el-font-size-base: 13px;
-  --el-text-color-primary: #1f2329;
-  --el-text-color-regular: #4e5969;
-  --el-text-color-secondary: #86909c;
-  --el-border-color: #e5e6eb;
-  --el-border-color-light: #e5e6eb;
-  --el-border-color-lighter: #f2f3f5;
-  --el-fill-color-light: #f7f8fa;
-  --el-fill-color-lighter: #fafbfc;
+  --el-text-color-primary: var(--text-1);
+  --el-text-color-regular: var(--text-2);
+  --el-text-color-secondary: var(--text-3);
+  --el-border-color: var(--border);
+  --el-border-color-light: var(--border);
+  --el-border-color-lighter: var(--border-light);
+  --el-fill-color-light: var(--bg-fill);
+  --el-fill-color-lighter: var(--bg-hover);
+  --el-bg-color: var(--bg-card);
+  --el-bg-color-overlay: var(--bg-card);
+  --el-fill-color-blank: var(--bg-card);
+  --el-mask-color: rgba(20, 22, 26, 0.55);
+}
+
+// ─── 暗黑主题 ─────────────────────────────────────────────
+html.dark {
+  --bg-page: #101218;
+  --bg-card: #1a1d26;
+  --bg-fill: #22262f;
+  --bg-hover: #262b35;
+  --border: #2b303c;
+  --border-light: #2f3542; // 分隔线：需在暗卡上清晰可见
+
+  --text-1: #e8eaed;
+  --text-2: #b6bcc6;
+  --text-3: #868e9c;
+  --text-faint: #6b7380;
+
+  --brand-soft: #1e2942;
+  --brand-hover: #5b85ff;
+
+  --nav-bg: #0e1117;
+  --nav-bg-hover: #1b1f29;
+  --nav-text: #9aa1ad;
+  --nav-text-active: #7da5ff;
+  --nav-active-bg: #1a2740;
+  --nav-border: #1c2029;
+
+  --canvas-bg: #0a0c10;
+
+  --el-color-primary: #3d6bff;
+  --el-color-primary-light-3: #4c78ff;
+  --el-color-primary-light-5: #668bff;
+  --el-color-primary-light-7: #8fa9ff;
+  --el-color-primary-light-8: #1f2f52;
+  --el-color-primary-light-9: var(--brand-soft);
+  --el-color-primary-dark-2: #2c54cc;
+  --el-bg-color: var(--bg-card);
+  --el-bg-color-overlay: #212530;
+  --el-fill-color-blank: var(--bg-card);
 }
 
 * {
@@ -34,9 +112,10 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
   font-size: 13px;
-  color: #1f2329;
-  background-color: #f5f6f8;
+  color: var(--text-1);
+  background-color: var(--bg-page);
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s, color 0.2s;
 }
 
 #app {
@@ -46,16 +125,18 @@ html, body {
 // ─── Element Plus 细节覆盖 ─────────────────────────────
 .el-card {
   border-radius: 4px;
-  border: 1px solid #e5e6eb;
+  border: 1px solid var(--border);
   box-shadow: none !important;
+  background: var(--bg-card);
+  color: var(--text-1);
 
   .el-card__header {
     padding: 10px 16px;
     font-size: 13px;
     font-weight: 600;
-    color: #1f2329;
-    border-bottom: 1px solid #e5e6eb;
-    background: #fff;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-card);
   }
 
   .el-card__body {
@@ -70,13 +151,18 @@ html, body {
 
 .el-table {
   font-size: 13px;
-  --el-table-header-bg-color: #f7f8fa;
-  --el-table-header-text-color: #4e5969;
-  --el-table-border-color: #e5e6eb;
-  --el-table-row-hover-bg-color: #f5f8ff;
+  --el-table-header-bg-color: var(--bg-fill);
+  --el-table-header-text-color: var(--text-2);
+  --el-table-border-color: var(--border);
+  --el-table-row-hover-bg-color: var(--brand-soft);
+  background: var(--bg-card);
 
   th.el-table__cell {
     font-weight: 600;
+  }
+
+  .el-table__empty-text {
+    color: var(--text-3);
   }
 }
 
@@ -91,11 +177,30 @@ html, body {
 
 .el-dialog {
   border-radius: 6px;
+  background: var(--bg-card);
 }
 
 .el-form-item__label {
   font-size: 13px;
-  color: #4e5969;
+  color: var(--text-2);
+}
+
+.el-select-dropdown {
+  background: var(--bg-card);
+
+  .el-select-dropdown__item {
+    color: var(--text-1);
+
+    &.hover, &:hover {
+      background: var(--bg-fill);
+    }
+
+    &.is-disabled { color: var(--text-faint); }
+  }
+}
+
+.el-empty__description p {
+  color: var(--text-3);
 }
 
 // ─── 滚动条 ────────────────────────────────────────────
@@ -104,10 +209,10 @@ html, body {
   height: 6px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #c9cdd4;
+  background: var(--text-faint);
   border-radius: 3px;
   &:hover {
-    background: #a9aeb8;
+    background: var(--text-3);
   }
 }
 ::-webkit-scrollbar-track {
@@ -124,13 +229,13 @@ html, body {
   .page-title {
     font-size: 17px;
     font-weight: 600;
-    color: #1f2329;
+    color: var(--text-1);
     line-height: 1.4;
   }
 
   .page-sub {
     font-size: 12px;
-    color: #86909c;
+    color: var(--text-3);
     margin-top: 2px;
   }
 }

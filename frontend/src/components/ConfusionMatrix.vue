@@ -132,8 +132,8 @@ const getCellColor = (row, col) => {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #999;
-    background: #fafafa;
+    color: var(--text-3);
+    background: var(--bg-fill);
     border-radius: 4px;
   }
 }

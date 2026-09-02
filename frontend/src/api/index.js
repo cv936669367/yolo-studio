@@ -40,6 +40,7 @@ export const imageApi = {
     })
   },
   delete: (imageId) => api.delete(`/images/${imageId}`),
+  batchDelete: (imageIds) => api.post('/images/batch-delete', { image_ids: imageIds }),
   updateSplit: (imageIds, split) => api.put('/images/split', { image_ids: imageIds, split }),
   autoSplit: (projectId) => api.post(`/projects/${projectId}/auto-split`),
 }
@@ -58,6 +59,7 @@ export const annotationApi = {
 export const trainApi = {
   listRuns: (projectId) => api.get(`/projects/${projectId}/runs`),
   getRun: (runId) => api.get(`/runs/${runId}`),
+  deleteRun: (projectId, runId) => api.delete(`/projects/${projectId}/runs/${runId}`),
   start: (projectId, config) => api.post(`/projects/${projectId}/train`, config),
   cancel: (runId) => api.post(`/runs/${runId}/cancel`),
   listModels: () => api.get('/models/available'),

@@ -129,6 +129,7 @@ class DetectionResult(BaseModel):
     class_name: str
     confidence: float
     bbox: dict  # {"x1": float, "y1": float, "x2": float, "y2": float}
+    segment: Optional[list] = None  # 分割模型: 归一化轮廓点 [{"x","y"},...]
 
 
 class InferenceResponse(BaseModel):

@@ -66,7 +66,49 @@ async def list_train_runs(
         select(TrainRun).where(TrainRun.project_id == project_id)
         .order_by(TrainRun.created_at.desc())
     )
-    return [r.to_dict() for r in result.scalars().all()]
+    runs = result.scalars().all()
+    items = []
+    for r in runs:
+        d = r.to_dict()
+        # 制品信息：权重文件是否存在 + 大小
+        best_pt = settings.OUTPUT_DIR / str(project_id) / f"run_{r.id}" / "weights" / "best.pt"
+        d["has_weights"] = best_pt.exists()
+        d["weights_size_mb"] = round(best_pt.stat().st_size / 1024 / 1024, 1) if best_pt.exists() else None
+        # 已导出文件（onnx 等）
+        exports = []
+        if best_pt.parent.exists():
+            for ext in ("onnx", "torchscript"):
+                for f in best_pt.parent.glob(f"*.{ext}"):
+                    exports.append({
+                        "name": f.name,
+                        "format": ext,
+                        "size_mb": round(f.stat().st_size / 1024 / 1024, 1),
+                    })
+        d["exports"] = exports
+        items.append(d)
+    return items
+
+
+@router.delete("/projects/{project_id}/runs/{run_id}")
+async def delete_train_run(
+    project_id: int,
+    run_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """删除训练制品（数据库记录 + 全部产物文件）"""
+    run = (await db.execute(select(TrainRun).where(TrainRun.id == run_id))).scalar_one_or_none()
+    if not run or run.project_id != project_id:
+        raise HTTPException(status_code=404, detail="训练记录不存在")
+
+    # 删除产物目录（权重、结果图、数据集、导出文件）
+    run_dir = settings.OUTPUT_DIR / str(project_id) / f"run_{run_id}"
+    if run_dir.exists():
+        import shutil
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+    await db.delete(run)
+    await db.commit()
+    return {"success": True, "message": f"制品 {run.model_name} (run {run_id}) 已删除"}
 
 
 @router.get("/runs/{run_id}", response_model=dict)

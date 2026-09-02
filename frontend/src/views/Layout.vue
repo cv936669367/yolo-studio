@@ -12,6 +12,23 @@
           {{ currentProject.name }}
         </el-tag>
         <el-tag size="small" effect="plain" round>v1.0.0</el-tag>
+        <!-- 计算设备 -->
+        <el-tooltip v-if="sysInfo" :content="`推理设备: ${sysInfo.device_name} · torch ${sysInfo.torch}`" placement="bottom">
+          <div class="device-badge" :class="sysInfo.device_label === 'GPU' ? 'gpu' : 'cpu'">
+            <el-icon :size="13"><Cpu /></el-icon>
+            <span class="device-type">{{ sysInfo.device_label }}</span>
+            <span class="device-name">{{ sysInfo.device_name }}</span>
+          </div>
+        </el-tooltip>
+        <!-- 主题切换 -->
+        <el-tooltip :content="isDark ? '切换到明亮模式' : '切换到暗黑模式'" placement="bottom">
+          <button class="theme-toggle" :class="{ dark: isDark }" @click="toggleTheme">
+            <el-icon :size="16">
+              <Sunny v-if="!isDark" />
+              <Moon v-else />
+            </el-icon>
+          </button>
+        </el-tooltip>
       </div>
     </header>
 
@@ -46,6 +63,10 @@
               <el-icon><Cpu /></el-icon>
               <span>模型训练</span>
             </el-menu-item>
+            <el-menu-item :index="`/project/${currentProjectId}/artifacts`">
+              <el-icon><Box /></el-icon>
+              <span>制品管理</span>
+            </el-menu-item>
             <el-menu-item :index="`/project/${currentProjectId}/evaluate`">
               <el-icon><DataAnalysis /></el-icon>
               <span>模型验证</span>
@@ -75,6 +96,28 @@ import { useRoute } from 'vue-router'
 const route = useRoute()
 const currentProject = ref(null)
 
+// ─── 主题切换（明亮/暗黑）───
+const isDark = ref(document.documentElement.classList.contains('dark'))
+
+const applyTheme = (dark) => {
+  document.documentElement.classList.toggle('dark', dark)
+  localStorage.setItem('yolo_theme', dark ? 'dark' : 'light')
+}
+
+const toggleTheme = () => {
+  isDark.value = !isDark.value
+  applyTheme(isDark.value)
+}
+
+// 计算设备信息（GPU/CPU + 型号）
+const sysInfo = ref(null)
+const loadSysInfo = async () => {
+  try {
+    const res = await fetch('/api/system/info')
+    sysInfo.value = await res.json()
+  } catch (e) {}
+}
+
 const currentProjectId = computed(() => {
   const id = route.params.id
   return id ? parseInt(id) : null
@@ -101,6 +144,8 @@ watch(currentProjectId, async (newId) => {
     currentProject.value = null
   }
 }, { immediate: true })
+
+loadSysInfo()
 </script>
 
 <style lang="scss" scoped>
@@ -119,8 +164,72 @@ watch(currentProjectId, async (newId) => {
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  background: #16181d;
-  border-bottom: 1px solid #26282f;
+  background: var(--nav-bg);
+  border-bottom: 1px solid var(--nav-border);
+
+  .device-badge {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 13px;
+    font-size: 11px;
+    cursor: default;
+
+    &.gpu {
+      background: rgba(31, 90, 255, 0.16);
+      border: 1px solid rgba(93, 133, 255, 0.35);
+      color: #8fabff;
+
+      .device-type {
+        font-weight: 700;
+        color: #6d9bff;
+      }
+    }
+
+    &.cpu {
+      background: rgba(108, 117, 125, 0.14);
+      border: 1px solid rgba(134, 142, 156, 0.3);
+      color: #9aa1ad;
+    }
+
+    .device-name {
+      max-width: 130px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .theme-toggle {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    border: 1px solid var(--nav-border);
+    background: transparent;
+    color: var(--nav-text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+
+    &:hover {
+      background: var(--nav-bg-hover);
+      color: #ffd666;
+      border-color: rgba(255, 214, 102, 0.4);
+    }
+
+    &.dark {
+      color: #8fabff;
+
+      &:hover {
+        color: #ffd666;
+        background: var(--nav-bg-hover);
+      }
+    }
+  }
 
   .brand {
     display: flex;
@@ -165,7 +274,7 @@ watch(currentProjectId, async (newId) => {
 .sidebar {
   width: 208px;
   flex: 0 0 208px;
-  background: #1b1e25;
+  background: var(--nav-bg);
   overflow-y: auto;
   padding-bottom: 12px;
 

@@ -77,6 +77,58 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/api/system/info")
+async def system_info():
+    """计算设备信息：CPU / GPU（含型号），供界面右上角展示"""
+    import platform as _platform
+    import subprocess
+
+    info = {
+        "device": "cpu",
+        "device_label": "CPU",
+        "device_name": _platform.processor() or _platform.machine(),
+        "os": f"{_platform.system()} {_platform.machine()}",
+        "python": _platform.python_version(),
+        "torch": None,
+        "ultralytics": None,
+    }
+
+    # torch 设备检测
+    try:
+        import torch
+        info["torch"] = torch.__version__
+        if torch.backends.mps.is_available():
+            info["device"] = "mps"
+            info["device_label"] = "GPU"
+            # Apple Silicon 型号
+            try:
+                brand = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"],
+                    capture_output=True, text=True, timeout=3,
+                ).stdout.strip()
+                if brand:
+                    info["device_name"] = brand
+            except Exception:
+                pass
+        elif torch.cuda.is_available():
+            info["device"] = "cuda"
+            info["device_label"] = "GPU"
+            try:
+                info["device_name"] = torch.cuda.get_device_name(0)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        import ultralytics
+        info["ultralytics"] = ultralytics.__version__
+    except Exception:
+        pass
+
+    return info
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host=settings.HOST, port=settings.PORT, reload=settings.DEBUG)

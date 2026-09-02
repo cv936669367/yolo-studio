@@ -31,6 +31,12 @@ const routes = [
         meta: { title: '模型训练' },
       },
       {
+        path: 'project/:id/artifacts',
+        name: 'Artifacts',
+        component: () => import('@/views/Artifacts.vue'),
+        meta: { title: '制品管理' },
+      },
+      {
         path: 'project/:id/evaluate',
         name: 'Evaluate',
         component: () => import('@/views/Evaluate.vue'),

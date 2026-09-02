@@ -131,6 +131,36 @@ async def delete_image(
     return MessageResponse(message="Image deleted successfully")
 
 
+@router.post("/images/batch-delete", response_model=MessageResponse)
+async def batch_delete_images(
+    data: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """批量删除图片（含标注与本地文件）"""
+    ids = data.get("image_ids") or []
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="未选择要删除的图片")
+    ids = [int(i) for i in ids]
+
+    result = await db.execute(select(Image).where(Image.id.in_(ids)))
+    images = result.scalars().all()
+    if not images:
+        raise HTTPException(status_code=404, detail="图片不存在")
+
+    # 删除本地文件
+    import os as _os
+    for img in images:
+        full_path = _os.path.join(settings.UPLOAD_DIR, str(img.project_id), img.filename)
+        if _os.path.exists(full_path):
+            _os.remove(full_path)
+
+    for img in images:
+        await db.delete(img)  # 级联删除标注
+
+    await db.commit()
+    return MessageResponse(message=f"已删除 {len(images)} 张图片")
+
+
 @router.put("/images/split", response_model=MessageResponse)
 async def update_image_splits(
     data: ImageSplitUpdate,

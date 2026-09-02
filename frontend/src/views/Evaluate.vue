@@ -5,21 +5,27 @@
         <div class="page-title">模型验证</div>
         <div class="page-sub">查看真实训练指标与可视化结果</div>
       </div>
-      <!-- 多模型选择 -->
-      <el-select
-        v-if="completedRuns.length"
-        v-model="selectedRunId"
-        size="default"
-        style="width: 300px;"
-        placeholder="选择训练模型版本"
-      >
-        <el-option
-          v-for="r in completedRuns"
-          :key="r.id"
-          :label="`${r.model_name} · ${formatDate(r.completed_at)} · mAP ${r.final_map50?.toFixed(3) || '-'}`"
-          :value="r.id"
-        />
-      </el-select>
+      <div class="head-actions">
+        <!-- 多模型选择 -->
+        <el-select
+          v-if="completedRuns.length"
+          v-model="selectedRunId"
+          size="default"
+          style="width: 300px;"
+          placeholder="选择训练模型版本"
+        >
+          <el-option
+            v-for="r in completedRuns"
+            :key="r.id"
+            :label="`${r.model_name} · ${formatDate(r.completed_at)} · mAP ${r.final_map50?.toFixed(3) || '-'}`"
+            :value="r.id"
+          />
+        </el-select>
+        <el-button type="primary" @click="$router.push(`/project/${projectId}/test`)">
+          <el-icon style="margin-right: 5px;"><View /></el-icon>
+          前往测试识别
+        </el-button>
+      </div>
     </div>
 
     <!-- 无训练记录 -->
@@ -64,53 +70,85 @@
         <el-empty v-else description="训练过程中未记录到指标" :image-size="60" />
       </el-card>
 
-      <!-- 训练产物图片（ultralytics 生成） -->
+      <!-- 训练产物图片（等高，可点击放大） -->
       <el-row :gutter="12" class="mt-12">
         <el-col :span="12">
-          <el-card shadow="never" header="混淆矩阵">
-            <img
-              v-if="artifacts.confusion"
-              :src="artifacts.confusion"
-              class="artifact-img"
-              alt="confusion matrix"
-            />
-            <el-empty v-else description="暂无混淆矩阵" :image-size="60" />
+          <el-card shadow="never" class="artifact-card">
+            <template #header>
+              <span class="card-title">混淆矩阵</span>
+            </template>
+            <div class="artifact-body">
+              <el-image
+                v-if="artifacts.confusion"
+                :src="artifacts.confusion"
+                :preview-src-list="[artifacts.confusion]"
+                fit="contain"
+                preview-teleported
+                class="artifact-img"
+              />
+              <el-empty v-else description="暂无混淆矩阵" :image-size="50" />
+            </div>
+            <div class="zoom-hint"><el-icon><ZoomIn /></el-icon> 点击图片放大查看</div>
           </el-card>
         </el-col>
         <el-col :span="12">
-          <el-card shadow="never" header="训练结果曲线 (results.png)">
-            <img
-              v-if="artifacts.results"
-              :src="artifacts.results"
-              class="artifact-img"
-              alt="results"
-            />
-            <el-empty v-else description="暂无训练结果图" :image-size="60" />
+          <el-card shadow="never" class="artifact-card">
+            <template #header>
+              <span class="card-title">训练结果曲线 (results.png)</span>
+            </template>
+            <div class="artifact-body">
+              <el-image
+                v-if="artifacts.results"
+                :src="artifacts.results"
+                :preview-src-list="[artifacts.results]"
+                fit="contain"
+                preview-teleported
+                class="artifact-img"
+              />
+              <el-empty v-else description="暂无训练结果图" :image-size="50" />
+            </div>
+            <div class="zoom-hint"><el-icon><ZoomIn /></el-icon> 点击图片放大查看</div>
           </el-card>
         </el-col>
       </el-row>
 
       <el-row :gutter="12" class="mt-12">
         <el-col :span="12">
-          <el-card shadow="never" header="验证集预测样例">
-            <img
-              v-if="artifacts.valPred"
-              :src="artifacts.valPred"
-              class="artifact-img"
-              alt="val prediction"
-            />
-            <el-empty v-else description="暂无预测样例" :image-size="60" />
+          <el-card shadow="never" class="artifact-card">
+            <template #header>
+              <span class="card-title">验证集预测样例</span>
+            </template>
+            <div class="artifact-body">
+              <el-image
+                v-if="artifacts.valPred"
+                :src="artifacts.valPred"
+                :preview-src-list="[artifacts.valPred]"
+                fit="contain"
+                preview-teleported
+                class="artifact-img"
+              />
+              <el-empty v-else description="暂无预测样例" :image-size="50" />
+            </div>
+            <div class="zoom-hint"><el-icon><ZoomIn /></el-icon> 点击图片放大查看</div>
           </el-card>
         </el-col>
         <el-col :span="12">
-          <el-card shadow="never" header="标签分布">
-            <img
-              v-if="artifacts.labels"
-              :src="artifacts.labels"
-              class="artifact-img"
-              alt="labels"
-            />
-            <el-empty v-else description="暂无标签分布图" :image-size="60" />
+          <el-card shadow="never" class="artifact-card">
+            <template #header>
+              <span class="card-title">标签分布</span>
+            </template>
+            <div class="artifact-body">
+              <el-image
+                v-if="artifacts.labels"
+                :src="artifacts.labels"
+                :preview-src-list="[artifacts.labels]"
+                fit="contain"
+                preview-teleported
+                class="artifact-img"
+              />
+              <el-empty v-else description="暂无标签分布图" :image-size="50" />
+            </div>
+            <div class="zoom-hint"><el-icon><ZoomIn /></el-icon> 点击图片放大查看</div>
           </el-card>
         </el-col>
       </el-row>
@@ -217,12 +255,6 @@
           </el-alert>
         </div>
       </el-card>
-
-      <div class="mt-16" style="display: flex; justify-content: flex-end;">
-        <el-button type="primary" @click="$router.push(`/project/${projectId}/test`)">
-          前往测试识别
-        </el-button>
-      </div>
     </template>
   </div>
 </template>
@@ -255,7 +287,8 @@ const currentRun = computed(() => {
     const found = completedRuns.value.find(r => r.id === selectedRunId.value)
     if (found) return found
   }
-  return completedRuns.value[completedRuns.value.length - 1]
+  // listRuns 按时间倒序，取最新（第一个）
+  return completedRuns.value[0]
 })
 watch(currentRun, (run) => {
   if (run) selectedRunId.value = run.id
@@ -333,16 +366,16 @@ onMounted(load)
 
 <style lang="scss" scoped>
 .panel-empty {
-  background: #fff;
-  border: 1px solid #e5e6eb;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 60px 0;
 }
 
 .metrics-row {
   .metric-box {
-    background: #fff;
-    border: 1px solid #e5e6eb;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 4px;
     text-align: center;
     padding: 20px 0;
@@ -355,17 +388,67 @@ onMounted(load)
 
     .metric-label {
       font-size: 12px;
-      color: #86909c;
+      color: var(--text-3);
       margin-top: 6px;
     }
   }
 }
 
-.artifact-img {
-  width: 100%;
-  display: block;
-  border: 1px solid #f2f3f5;
-  border-radius: 3px;
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+// 产物图卡：等高 + 点击放大
+.artifact-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  :deep(.el-card__body) {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+  }
+
+  .card-title {
+    font-size: 13px;
+  }
+
+  .artifact-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-fill);
+    border: 1px solid var(--border-light);
+    border-radius: 3px;
+    overflow: hidden;
+    min-height: 260px;
+
+    .artifact-img {
+      width: 100%;
+      height: 100%;
+      cursor: zoom-in;
+
+      :deep(img) {
+        max-width: 100%;
+        max-height: 100%;
+      }
+    }
+  }
+
+  .zoom-hint {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-faint);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    justify-content: center;
+  }
 }
 
 .export-row {
@@ -378,12 +461,12 @@ onMounted(load)
     .export-model {
       font-size: 16px;
       font-weight: 700;
-      color: #1f2329;
+      color: var(--text-1);
     }
 
     .export-meta {
       font-size: 12px;
-      color: #86909c;
+      color: var(--text-3);
       margin-top: 3px;
     }
   }
