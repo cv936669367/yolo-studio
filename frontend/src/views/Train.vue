@@ -498,6 +498,16 @@ onUnmounted(() => {
       letter-spacing: 0.8px;
       color: var(--text-3);
       margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      &::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--border-light);
+      }
     }
   }
 
@@ -507,20 +517,23 @@ onUnmounted(() => {
     gap: 8px;
 
     .model-card {
-      padding: 10px 12px;
-      border: 1.5px solid #e5e6eb;
-      border-radius: 4px;
+      padding: 9px 11px;
+      background: var(--bg-fill); // 灰调填充，弱化刺眼白
+      border: 1px solid var(--border);
+      border-radius: 5px;
       cursor: pointer;
       transition: border-color 0.15s, background 0.15s;
       min-width: 0;
 
       &:hover {
-        border-color: #8fabff;
+        border-color: var(--text-faint);
+        background: var(--bg-hover);
       }
 
       &.active {
-        border-color: #1f5aff;
-        background-color: #f5f8ff;
+        border-color: var(--brand);
+        background: var(--brand-soft);
+        box-shadow: inset 0 0 0 1px var(--brand);
       }
 
       .model-card-top {
@@ -532,7 +545,7 @@ onUnmounted(() => {
 
         .model-name {
           font-weight: 600;
-          font-size: 14px;
+          font-size: 13.5px;
           color: var(--text-1);
           white-space: nowrap;
           overflow: hidden;
