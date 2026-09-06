@@ -68,6 +68,10 @@ export const trainApi = {
   downloadPt: (projectId, runId) => api.get(`/projects/${projectId}/runs/${runId}/download`, { responseType: 'blob' }),
   exportModel: (projectId, runId, format) => api.post(`/projects/${projectId}/runs/${runId}/export`, null, { params: { format } }),
   getMetrics: (runId) => api.get(`/runs/${runId}/metrics`),
+  // 迁移学习：可用起始权重（官方基线 + 各工程已训 run）
+  transferSources: (projectId) => api.get(`/projects/${projectId}/transfer-sources`),
+  // 当前正在运行的训练（全局完成提醒）
+  active: () => api.get('/training/active'),
 }
 
 // ─── Inference API ────────────────────────────────────────
@@ -95,6 +99,10 @@ export const aiApi = {
   samStatus: () => api.get('/sam/status'),
   samDownload: () => api.post('/sam/download'),
   samDownloadStatus: () => api.get('/sam/download-status'),
+  // 自动标注（批量初稿）
+  autoLabel: (projectId, data) => api.post(`/projects/${projectId}/auto-label`, null, { params: data }),
+  autoLabelStatus: (projectId) => api.get(`/projects/${projectId}/auto-label/status`),
+  autoLabelCancel: (projectId) => api.post(`/projects/${projectId}/auto-label/cancel`),
 }
 
 export default api

@@ -10,7 +10,7 @@ import os
 
 from core.config import settings, DB_PATH
 from core.database import init_db
-from api import projects, images, annotations, training, inference, ai_annotate
+from api import projects, images, annotations, training, inference, ai_annotate, auto_label
 
 
 @asynccontextmanager
@@ -60,6 +60,7 @@ app.include_router(annotations.router, prefix="/api")
 app.include_router(training.router, prefix="/api")
 app.include_router(inference.router, prefix="/api")
 app.include_router(ai_annotate.router, prefix="/api")
+app.include_router(auto_label.router, prefix="/api")
 
 
 @app.get("/")

@@ -191,11 +191,102 @@
           </div>
         </div>
 
-        <!-- FIND OBJECTS WITH AI -->
-        <div class="panel-section">
-          <el-button type="primary" plain style="width: 100%;" @click="autoAnnotate" :disabled="!currentImage" :loading="aiLoading">
-            <el-icon><MagicStick /></el-icon> Find Objects with AI
+        <!-- AUTO LABEL 自动标注（批量生成初稿） -->
+        <div class="panel-section auto-label-panel">
+          <div class="panel-title-row">
+            <span class="panel-title">AUTO LABEL</span>
+            <span class="title-stat mono">批量初稿</span>
+          </div>
+
+          <div class="al-field">
+            <div class="al-label-row">
+              <span class="al-label">标注模型</span>
+              <span class="al-type-tag" :class="needSeg ? 'seg' : 'det'">
+                {{ needSeg ? '实例分割' : '目标检测' }}
+              </span>
+            </div>
+            <el-select
+              v-model="alModel"
+              size="small"
+              class="al-select"
+              placeholder="无可用模型"
+              :disabled="alRunning || !alModelReady"
+            >
+              <el-option-group
+                v-if="alRuns.length"
+                :label="`本工程已训模型（${needSeg ? '实例分割' : '目标检测'}，类别一致）`"
+              >
+                <el-option
+                  v-for="r in alRuns"
+                  :key="'run-' + r.id"
+                  :value="'run:' + r.id"
+                  :label="`run ${r.id} · ${r.model_name} · mAP@50 ${r.final_map50 ? r.final_map50.toFixed(3) : '-'}`"
+                />
+              </el-option-group>
+              <el-option-group
+                v-if="alBaselines.length"
+                :label="`官方基线 COCO · ${needSeg ? '分割' : '检测'}（已下载）`"
+              >
+                <el-option
+                  v-for="m in alBaselines"
+                  :key="'base-' + m.id"
+                  :value="'base:' + m.id"
+                  :label="`${m.name} · ${m.desc}`"
+                />
+              </el-option-group>
+            </el-select>
+          </div>
+
+          <div class="al-field">
+            <div class="al-label-row">
+              <span class="al-label">置信度阈值</span>
+              <span class="mono al-val">{{ alConf.toFixed(2) }}</span>
+            </div>
+            <el-slider
+              v-model="alConf"
+              :min="0.05"
+              :max="0.95"
+              :step="0.05"
+              size="small"
+              :disabled="alRunning"
+            />
+          </div>
+
+          <div class="al-field">
+            <div class="al-label">范围</div>
+            <el-select v-model="alScope" size="small" :disabled="alRunning">
+              <el-option value="unanno-all" :label="`全部未标注（${unannotatedAll} 张）`" :disabled="!unannotatedAll" />
+              <el-option value="unanno-group" :label="`当前分组未标注（${unannotatedGroup} 张）`" :disabled="!unannotatedGroup" />
+              <el-option value="current" label="仅当前图片（允许追加）" />
+            </el-select>
+          </div>
+
+          <el-button
+            v-if="!alRunning"
+            type="primary"
+            plain
+            style="width: 100%;"
+            :disabled="!alReady"
+            @click="startAutoLabel"
+          >
+            <el-icon><MagicStick /></el-icon> 开始自动标注
           </el-button>
+          <div v-else class="al-progress">
+            <el-progress :percentage="alPercent" :stroke-width="6" :show-text="false" />
+            <div class="al-progress-text mono">
+              处理 {{ alProcessed }}/{{ alTotal }} · 已生成 {{ alCreated }} 个标注
+            </div>
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              style="width: 100%;"
+              @click="cancelAutoLabel"
+              :loading="alCancelling"
+            >停止</el-button>
+          </div>
+
+          <div v-if="alHint && !alRunning" class="al-hint">{{ alHint }}</div>
         </div>
       </aside>
 
@@ -597,7 +688,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { projectApi, imageApi, annotationApi, aiApi } from '@/api'
+import { projectApi, imageApi, annotationApi, aiApi, trainApi } from '@/api'
 
 const route = useRoute()
 const projectId = computed(() => parseInt(route.params.id))
@@ -613,7 +704,6 @@ const project = ref({})
 const annotations = ref([])
 const historyStack = ref([])
 const redoStack = ref([])
-const aiLoading = ref(false)
 const smartLoading = ref(false)
 
 // ─── 垂直工具条按钮（含详细悬停说明）───
@@ -1545,25 +1635,162 @@ const changeAnnoClass = async (anno, newClass) => {
   }
 }
 
-const autoAnnotate = async () => {
-  if (!currentImage.value) return
-  pushHistory()
-  aiLoading.value = true
+// ─── Auto-Label 自动标注（批量初稿）─────────────────────
+// 模型来源：本工程已完成 run（best.pt）或任务匹配的已下载基线
+// 任务匹配是硬约束：polygon 工程只允许 实例分割(segment) 模型（产出多边形），
+//                   rectangle 工程只允许 目标检测(detect) 模型（产出矩形框）
+const alRuns = ref([])
+const alBaselines = ref([])
+const alModel = ref('')           // 'run:5' | 'base:yolov8s-seg'
+const alConf = ref(0.25)
+const alScope = ref('unanno-all') // 'unanno-all' | 'unanno-group' | 'current'
+const alRunning = ref(false)
+const alCancelling = ref(false)
+const alStatus = ref(null)
+const alTimer = ref(null)
+
+// 工程标注类型 → 所需模型任务（与后端 auto_label 校验规则一致）
+const needSeg = computed(() => project.value.anno_type === 'polygon')
+
+// 模型名 → 任务类型（官方 run 名带 -seg 后缀；与后端 model_task 同规则）
+const modelTaskOf = (name) => (String(name || '').toLowerCase().endsWith('-seg') ? 'segment' : 'detect')
+
+// 当前工程允许的模型任务
+const requiredTask = computed(() => (needSeg.value ? 'segment' : 'detect'))
+
+// 全部 / 当前分组 未标注数量
+const unannotatedAll = computed(() => images.value.filter(i => !(i.annotation_count > 0)).length)
+const unannotatedGroup = computed(() => {
+  const sp = splitFilter.value
+  return images.value.filter(i => (sp === 'all' || i.split === sp) && !(i.annotation_count > 0)).length
+})
+
+// 可用模型数量不足时的提示
+const alModelReady = computed(() => alRuns.value.length + alBaselines.value.length > 0)
+const alHint = computed(() => {
+  if (!project.value.anno_type) return '工程类型加载中，请稍候...'
+  if (!alModelReady.value) {
+    const t = needSeg.value ? '实例分割' : '目标检测'
+    return `暂无${t}模型：需先完成一次训练或下载 ${t === '实例分割' ? 'YOLOv8s-seg / YOLO11s-seg' : 'YOLOv8s / YOLO11s'} 官方基线`
+  }
+  if (!alModel.value) return '请选择标注模型'
+  if (alScope.value === 'current') return ''
+  const n = alScope.value === 'unanno-all' ? unannotatedAll.value : unannotatedGroup.value
+  if (n === 0) return '当前范围没有未标注图片，可切到「仅当前图片」追加初稿'
+  return ''
+})
+// 启动条件：有模型 + 范围有目标（当前图片范围恒可执行）
+const alReady = computed(() => {
+  if (!alModel.value || alRunning.value) return false
+  if (alScope.value === 'current') return !!currentImage.value
+  return alScope.value === 'unanno-all' ? unannotatedAll.value > 0 : unannotatedGroup.value > 0
+})
+
+const alTotal = computed(() => alStatus.value?.total ?? 0)
+const alProcessed = computed(() => alStatus.value?.processed ?? 0)
+const alCreated = computed(() => alStatus.value?.created ?? 0)
+const alPercent = computed(() => {
+  const t = alTotal.value
+  return t > 0 ? Math.min(100, Math.round(alProcessed.value / t * 100)) : 0
+})
+
+// 加载自动标注可用模型（只保留与工程标注类型匹配的模型，杜绝跨任务错配）
+const loadAutoLabelModels = async () => {
+  // 工程类型未知 → 绝不猜测任务，等工程加载完由 watch 重载
+  if (!project.value.anno_type) return
+  const task = requiredTask.value
   try {
-    const res = await aiApi.annotate(projectId.value, {
-      image_id: currentImage.value.id, model_id: 'yolov8s', conf: 0.25,
-    })
-    if (!res.success) {
-      ElMessage.error(res.message || 'AI 辅助标注失败')
-      popHistory()
-      return
-    }
-    annotations.value.push(...res.created)
-    ElMessage.success(res.message || `AI 检测到 ${res.detections.length} 个目标`)
+    const runs = await trainApi.listRuns(projectId.value)
+    alRuns.value = (runs || []).filter(r =>
+      r.status === 'completed' && r.has_weights && modelTaskOf(r.model_name) === task)
   } catch (e) {
-    popHistory()
-  } finally {
-    aiLoading.value = false
+    alRuns.value = []
+  }
+  try {
+    const models = await trainApi.listModels()
+    alBaselines.value = (models || []).filter(m =>
+      m.downloaded && m.task === task)
+  } catch (e) {
+    alBaselines.value = []
+  }
+  // 默认：优先本工程已训 run，其次基线；并校验旧选择是否仍合法
+  if (!alRunning.value) {
+    const valid = [...alRuns.value.map(r => `run:${r.id}`), ...alBaselines.value.map(m => `base:${m.id}`)]
+    if (valid.includes(alModel.value)) return
+    if (alRuns.value.length) alModel.value = `run:${alRuns.value[0].id}`
+    else if (alBaselines.value.length) alModel.value = `base:${alBaselines.value[0].id}`
+    else alModel.value = ''
+  }
+}
+
+// 工程信息就绪/变更后重载自动标注模型源
+watch(() => project.value.anno_type, (v) => {
+  if (v) loadAutoLabelModels()
+})
+
+const startAutoLabel = async () => {
+  if (!alReady.value) return
+  const [kind, val] = alModel.value.split(':')
+  const params = {
+    conf: alConf.value,
+    iou: 0.45,
+    only_unannotated: true,
+  }
+  if (kind === 'run') params.run_id = parseInt(val)
+  else params.model_name = val
+
+  if (alScope.value === 'current') {
+    params.only_unannotated = false
+    params.image_ids = String(currentImage.value.id)
+  } else if (alScope.value === 'unanno-group' && splitFilter.value !== 'all') {
+    params.split = splitFilter.value
+  }
+
+  try {
+    const res = await aiApi.autoLabel(projectId.value, params)
+    ElMessage.info(res.message || '自动标注已启动')
+    alRunning.value = true
+    alCancelling.value = false
+    alStatus.value = { total: 0, processed: 0, created: 0, skipped_annotated: 0 }
+    alTimer.value = setInterval(pollAutoLabel, 1000)
+  } catch (e) {}
+}
+
+const pollAutoLabel = async () => {
+  try {
+    const st = await aiApi.autoLabelStatus(projectId.value)
+    alStatus.value = st
+    if (!st.running && ['done', 'cancelled', 'error'].includes(st.status)) {
+      stopAutoLabelPoll()
+      alRunning.value = false
+      if (st.status === 'error') ElMessage.error(st.error || '自动标注失败')
+      else ElMessage.success(st.message || '自动标注完成')
+      // 刷新图片标注数并保留当前浏览位置
+      const curId = currentImage.value?.id
+      await loadImages()
+      if (curId) relocate(curId)
+      await loadAnnotations()
+    }
+  } catch (e) {
+    stopAutoLabelPoll()
+    alRunning.value = false
+  }
+}
+
+const cancelAutoLabel = async () => {
+  alCancelling.value = true
+  try {
+    const res = await aiApi.autoLabelCancel(projectId.value)
+    ElMessage.info(res.message || '正在停止...')
+  } catch (e) {
+    alCancelling.value = false
+  }
+}
+
+const stopAutoLabelPoll = () => {
+  if (alTimer.value) {
+    clearInterval(alTimer.value)
+    alTimer.value = null
   }
 }
 
@@ -1665,12 +1892,14 @@ onMounted(() => {
   loadProject()
   loadImages()
   checkSamStatus()
+  loadAutoLabelModels()
   window.addEventListener('keydown', handleKeydown)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   stopSamPolling()
+  stopAutoLabelPoll()
 })
 </script>
 
@@ -2437,6 +2666,80 @@ onUnmounted(() => {
       color: var(--text-faint);
       font-size: 12px;
     }
+  }
+}
+
+// ─── AUTO LABEL 自动标注面板 ──────────────────────────────
+.auto-label-panel {
+  .al-field {
+    margin-bottom: 12px;
+
+    .al-select { width: 100%; }
+
+    .al-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      color: var(--text-3);
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+
+    .al-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2px;
+    }
+
+    .al-val {
+      font-size: 11px;
+      color: var(--brand);
+    }
+
+    // 工程所需模型任务徽标
+    .al-type-tag {
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 1;
+      padding: 3px 6px;
+      border-radius: 3px;
+
+      &.seg {
+        color: #0f9d58;
+        background: rgba(15, 157, 88, 0.12);
+        border: 1px solid rgba(15, 157, 88, 0.35);
+      }
+
+      &.det {
+        color: #1f5aff;
+        background: rgba(31, 90, 255, 0.1);
+        border: 1px solid rgba(31, 90, 255, 0.32);
+      }
+    }
+  }
+
+  .al-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    .al-progress-text {
+      font-size: 11px;
+      color: var(--text-2);
+      text-align: center;
+    }
+  }
+
+  .al-hint {
+    margin-top: 8px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: #d97706;
+    background: rgba(217, 119, 6, 0.08);
+    border: 1px solid rgba(217, 119, 6, 0.25);
+    border-radius: 4px;
+    padding: 6px 8px;
   }
 }
 </style>

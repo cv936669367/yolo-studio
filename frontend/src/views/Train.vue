@@ -1,15 +1,29 @@
 <template>
   <div class="train-page">
     <div class="page-header">
-      <h2>模型训练</h2>
-      <p>选择 YOLO 模型、配置参数、启动训练</p>
+      <div class="ph-left">
+        <h2>模型训练</h2>
+        <p>选择 YOLO 模型、配置参数、启动训练</p>
+      </div>
+      <div class="ph-right">
+        <div class="notify-toggle">
+          <span class="nt-label">训练完成提醒</span>
+          <el-switch v-model="notifyEnabled" size="small" />
+          <el-tooltip
+            content="训练结束或失败时：浏览器标签标题闪烁（后台时）+ 提示音 + 右上角通知；离开本页也生效"
+            placement="bottom-end"
+          >
+            <span class="nt-hint">声音 / 标题闪烁</span>
+          </el-tooltip>
+        </div>
+      </div>
     </div>
 
     <el-row :gutter="20">
       <!-- Left: Configuration -->
       <el-col :span="14">
         <!-- Model Selection -->
-        <el-card shadow="never" :header="`选择 ${modelTypeLabel}（基线权重）`">
+        <el-card shadow="never" header="选择模型">
           <el-alert
             v-if="project.anno_type === 'polygon'"
             type="info"
@@ -18,59 +32,122 @@
             title="当前工程为多边形标注，已过滤为实例分割模型（YOLOv8-seg / YOLO11-seg 等）"
             style="margin-bottom: 12px;"
           />
-          <div
-            v-for="group in modelGroups"
-            :key="group.family"
-            class="model-family"
-          >
-            <div class="family-title">{{ group.family }}</div>
-            <div class="model-grid">
-              <div
-                v-for="model in group.models"
-                :key="model.id"
-                class="model-card"
-                :class="{ active: selectedModel === model.id }"
-                @click="selectedModel = model.id"
-              >
-                <div class="model-card-top">
-                  <el-tooltip :content="model.name" placement="top">
-                    <div class="model-name">{{ model.name }}</div>
-                  </el-tooltip>
-                  <div class="model-tag">
-                    <el-tag v-if="model.downloaded" type="success" size="small" effect="plain">已下载</el-tag>
-                    <el-tag v-else size="small" effect="plain">{{ model.size_mb }} MB</el-tag>
+
+          <!-- 起始权重来源：官方基线 / 迁移学习 -->
+          <div class="pretrain-row">
+            <div class="family-title" style="margin-bottom: 0;">
+              起始权重
+            </div>
+            <el-radio-group v-model="pretrainSource" size="small" :disabled="isTraining">
+              <el-radio-button value="base">官方预训练基线</el-radio-button>
+              <el-radio-button value="run" :disabled="!transferRuns.length">
+                迁移学习<span v-if="transferRuns.length" class="radio-count">{{ transferRuns.length }}</span>
+              </el-radio-button>
+            </el-radio-group>
+            <el-tooltip
+              placement="top-start"
+              :show-after="150"
+            >
+              <template #content>
+                <div class="tt-line"><b>官方预训练基线</b>：COCO 80 类权重，需先下载（约 6~130MB）</div>
+                <div class="tt-line"><b>迁移学习</b>：复用任意工程已训练 best.pt 作为起始权重继续微调，
+                  不再需要下载基线；任务类型自动按工程标注类型校验</div>
+              </template>
+              <el-icon class="pretrain-help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </div>
+
+          <!-- 模式 A：官方基线模型选择 -->
+          <template v-if="pretrainSource === 'base'">
+            <div class="model-family" v-for="group in modelGroups" :key="group.family">
+              <div class="family-title">{{ group.family }}</div>
+              <div class="model-grid">
+                <div
+                  v-for="model in group.models"
+                  :key="model.id"
+                  class="model-card"
+                  :class="{ active: selectedModel === model.id }"
+                  @click="selectedModel = model.id"
+                >
+                  <div class="model-card-top">
+                    <el-tooltip :content="model.name" placement="top">
+                      <div class="model-name">{{ model.name }}</div>
+                    </el-tooltip>
+                    <div class="model-tag">
+                      <el-tag v-if="model.downloaded" type="success" size="small" effect="plain">已下载</el-tag>
+                      <el-tag v-else size="small" effect="plain">{{ model.size_mb }} MB</el-tag>
+                    </div>
                   </div>
+                  <div class="model-desc">{{ model.desc }}</div>
+                  <el-progress
+                    v-if="downloadProgress[model.id] !== undefined && downloadProgress[model.id] < 100"
+                    :percentage="downloadProgress[model.id]"
+                    :stroke-width="4"
+                    class="dl-progress"
+                  />
                 </div>
-                <div class="model-desc">{{ model.desc }}</div>
-                <el-progress
-                  v-if="downloadProgress[model.id] !== undefined && downloadProgress[model.id] < 100"
-                  :percentage="downloadProgress[model.id]"
-                  :stroke-width="4"
-                  class="dl-progress"
-                />
               </div>
             </div>
-          </div>
 
-          <el-divider style="margin: 14px 0;" />
+            <el-divider style="margin: 14px 0;" />
 
-          <div style="display: flex; gap: 12px; align-items: center;">
-            <el-button
-              type="primary"
-              plain
-              @click="downloadModel"
-              :loading="downloading"
-              :disabled="!selectedModel || downloadProgress[selectedModel] === 100"
-            >
-              <el-icon><Download /></el-icon>
-              {{ downloadProgress[selectedModel] !== undefined && downloadProgress[selectedModel] < 100
-                ? `下载中 ${downloadProgress[selectedModel]}%`
-                : (isModelDownloaded(selectedModel) ? '重新下载' : '下载基线权重') }}
-            </el-button>
-            <span class="dl-hint" v-if="downloadProgress[selectedModel] !== undefined && downloadProgress[selectedModel] < 100">
-              国内镜像源加速下载中...
-            </span>
-          </div>
+            <div style="display: flex; gap: 12px; align-items: center;">
+              <el-button
+                type="primary"
+                plain
+                @click="downloadModel"
+                :loading="downloading"
+                :disabled="!selectedModel || downloadProgress[selectedModel] === 100"
+              >
+                <el-icon><Download /></el-icon>
+                {{ downloadProgress[selectedModel] !== undefined && downloadProgress[selectedModel] < 100
+                  ? `下载中 ${downloadProgress[selectedModel]}%`
+                  : (isModelDownloaded(selectedModel) ? '重新下载' : '下载基线权重') }}
+              </el-button>
+              <span class="dl-hint" v-if="downloadProgress[selectedModel] !== undefined && downloadProgress[selectedModel] < 100">
+                国内镜像源加速下载中...
+              </span>
+            </div>
+          </template>
+
+          <!-- 模式 B：迁移学习来源 run -->
+          <template v-else>
+            <div class="family-title">可用训练成果（best.pt 均存在）</div>
+            <div class="run-list">
+              <div
+                v-for="r in transferRuns"
+                :key="r.id"
+                class="run-item"
+                :class="{ active: selectedTransferRun === r.id }"
+                @click="selectTransferRun(r)"
+              >
+                <div class="run-item-top">
+                  <span class="run-name">{{ r.model_name }}</span>
+                  <span class="run-proj">
+                    <el-tag
+                      v-if="r.project_id === projectId"
+                      size="small" type="info" effect="plain"
+                    >本工程</el-tag>
+                    <template v-else>工程「{{ r.project_name }}」</template>
+                  </span>
+                </div>
+                <div class="run-item-sub">
+                  <span class="mono">run {{ r.id }}</span>
+                  <span v-if="r.final_map50" class="mono">mAP@50 {{ r.final_map50.toFixed(3) }}</span>
+                  <span>{{ r.epochs }} 轮</span>
+                  <span>{{ r.model_name }}</span>
+                  <span class="mono">{{ r.weights_size_mb }} MB</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="!transferRuns.length" class="run-empty">
+              暂无可迁移的训练成果：需要至少一个「已完成」且保留 best.pt 权重文件的 run
+            </div>
+            <div class="transfer-note">
+              迁移后将以所选权重为起点在<b>当前工程数据集</b>上继续训练；
+              起始权重与当前工程类别数量不同时，输出层会自动重建
+            </div>
+          </template>
         </el-card>
 
         <!-- Training Parameters -->
@@ -124,10 +201,20 @@
           />
 
           <el-alert
-            v-else-if="!selectedModelDownloaded"
+            v-else-if="pretrainSource === 'base' && !selectedModelDownloaded"
             title="基线模型未下载"
             type="error"
             description="请先在上方模型列表中下载所选模型的基线权重，下载完成后即可开始训练"
+            show-icon
+            :closable="false"
+            style="margin-top: 12px;"
+          />
+
+          <el-alert
+            v-else-if="pretrainSource === 'run' && !selectedTransferRun"
+            title="未选择迁移来源"
+            type="error"
+            description="请在上方列表中选择一个训练成果作为起始权重"
             show-icon
             :closable="false"
             style="margin-top: 12px;"
@@ -138,15 +225,20 @@
             size="large"
             style="width: 100%; margin-top: 20px;"
             @click="startTraining"
-            :disabled="isTraining || !hasEnoughData || !selectedModelDownloaded"
+            :disabled="isTraining || !hasEnoughData || !canStart"
             :loading="isTraining"
           >
             <template #icon>
               <VideoPlay v-if="!isTraining" />
               <Loading v-else />
             </template>
-            {{ isTraining ? `训练中... ${trainingProgress}%` : (selectedModelDownloaded ? '开始训练' : '请先下载模型') }}
+            {{ isTraining ? `训练中... ${trainingProgress}%` : (canStart ? (pretrainSource === 'run' ? '开始迁移训练' : '开始训练') : '请选择有效配置') }}
           </el-button>
+
+          <div v-if="!isTraining && canStart && pretrainSource === 'run'" class="start-note">
+            <el-icon><Connection /></el-icon>
+            起始权重：{{ selectedTransferRunDesc }}
+          </div>
           
           <el-progress
             v-if="isTraining"
@@ -227,10 +319,18 @@ const downloading = ref(false)
 const downloadProgress = ref({}) // {model_id: 0-100}
 const downloadTimer = ref(null)
 
+// 迁移学习（起始权重来源）
+const pretrainSource = ref('base') // 'base' | 'run'
+const transferRuns = ref([])       // 可用训练成果（任务类型已与工程匹配 + 权重文件存在）
+const selectedTransferRun = ref(null)
+const selectedTransferRunDesc = ref('')
+
+// 训练完成提醒（全局生效：标题闪烁 + 提示音，见 Layout）
+const notifyEnabled = ref(localStorage.getItem('yolo_notify_enabled') !== '0')
+watch(notifyEnabled, (v) => localStorage.setItem('yolo_notify_enabled', v ? '1' : '0'))
+
 // 按工程标注类型过滤：rectangle→检测模型, polygon→分割模型
-const modelTypeLabel = computed(() =>
-  project.value.anno_type === 'polygon' ? '实例分割' : '目标检测'
-)
+// （说明文字已内联在模型卡片的 alert 中）
 
 // 按版本族分组（已按工程类型过滤）
 const modelGroups = computed(() => {
@@ -274,7 +374,48 @@ const hasEnoughData = computed(() => {
   return true // Simplified for now
 })
 
+// 当前模式是否满足启动条件
+const canStart = computed(() => {
+  if (pretrainSource.value === 'run') return !!selectedTransferRun.value
+  return selectedModelDownloaded.value
+})
+
 // Methods
+const loadTransferSources = async () => {
+  try {
+    const res = await trainApi.transferSources(projectId.value)
+    transferRuns.value = res.runs || []
+    // 默认选中第一个可用 run（若有）；清空来源时同步 model_name 给架构展示
+    const first = transferRuns.value[0]
+    if (first && pretrainSource.value === 'run') {
+      selectTransferRun(first)
+    } else if (pretrainSource.value === 'run') {
+      selectedTransferRun.value = null
+      trainConfig.model_name = selectedModel.value
+    }
+  } catch (e) {}
+}
+
+const selectTransferRun = (r) => {
+  selectedTransferRun.value = r.id
+  selectedTransferRunDesc.value = `工程「${r.project_name}」run ${r.id} · ${r.model_name} · mAP@50 ${r.final_map50?.toFixed(3) ?? '-'}`
+  // 架构模型名随来源权重走（无需下载基线）
+  trainConfig.model_name = r.model_name
+}
+
+// 切换来源模式时重置选择态
+watch(pretrainSource, (v) => {
+  if (v === 'run') {
+    const first = transferRuns.value[0]
+    if (first) selectTransferRun(first)
+    else {
+      selectedTransferRun.value = null
+      trainConfig.model_name = selectedModel.value
+    }
+  } else {
+    trainConfig.model_name = selectedModel.value
+  }
+})
 const loadModels = async () => {
   try {
     availableModels.value = await trainApi.listModels()
@@ -373,22 +514,29 @@ const stopDownloadPolling = () => {
 }
 
 const startTraining = async () => {
+  if (isTraining.value) return
+  if (pretrainSource.value === 'run' && !selectedTransferRun.value) {
+    ElMessage.warning('请先选择迁移学习的来源训练成果')
+    return
+  }
   isTraining.value = true
   trainingProgress.value = 0
   trainingLog.value = ''
   
   try {
     const config = {
-      model_name: selectedModel.value,
+      model_name: trainConfig.model_name,
       epochs: trainConfig.epochs,
       img_size: trainConfig.img_size,
       batch_size: trainConfig.batch_size,
+      pretrain_source: pretrainSource.value,
+      pretrain_run_id: pretrainSource.value === 'run' ? selectedTransferRun.value : null,
     }
     
     const res = await trainApi.start(projectId.value, config)
     currentRunId.value = res.id
     
-    ElMessage.info(res.message)
+    ElMessage.info(res.message || '训练已启动')
     
     // Start polling for progress
     startPolling()
@@ -421,17 +569,10 @@ const startPolling = () => {
         trainingProgress.value = Math.round((lastEpoch.epoch / trainConfig.epochs) * 100)
       }
       
-      // Check completion
+      // Check completion（完成/失败提示由全局训练提醒统一弹出：标题闪烁 + 声音 + 通知）
       if (run.status === 'completed' || run.status === 'failed') {
         stopPolling()
         isTraining.value = false
-        
-        if (run.status === 'completed') {
-          ElMessage.success(`训练完成！mAP@50 = ${run.final_map50?.toFixed(3)}`)
-        } else {
-          ElMessage.error('训练失败')
-        }
-        
         loadTrainRuns()
       }
       
@@ -463,6 +604,7 @@ onMounted(() => {
   loadProject()
   loadModels()
   loadTrainRuns()
+  loadTransferSources()
 })
 
 onUnmounted(() => {
@@ -475,7 +617,11 @@ onUnmounted(() => {
 .train-page {
   .page-header {
     margin-bottom: 20px;
-    
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+
     h2 {
       font-size: 22px;
       font-weight: 600;
@@ -487,6 +633,156 @@ onUnmounted(() => {
       color: var(--text-3);
       font-size: 14px;
     }
+
+    .ph-right {
+      flex: 0 0 auto;
+      padding-top: 6px;
+
+      .notify-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--bg-fill);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 10px;
+
+        .nt-label {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--text-2);
+        }
+
+        .nt-hint {
+          font-size: 11px;
+          color: var(--text-3);
+          cursor: default;
+        }
+      }
+    }
+  }
+
+  // 起始权重来源行
+  .pretrain-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed var(--border-light);
+
+    .pretrain-help {
+      color: var(--text-faint);
+      cursor: help;
+      font-size: 15px;
+
+      &:hover { color: var(--text-2); }
+    }
+  }
+
+  .radio-count {
+    margin-left: 4px;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+
+  .tt-line {
+    font-size: 12px;
+    line-height: 1.7;
+    max-width: 300px;
+    color: #c6cbd4;
+
+    b { color: #fff; }
+  }
+
+  // 迁移学习 run 列表
+  .run-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+
+    .run-item {
+      padding: 9px 12px;
+      background: var(--bg-fill);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+
+      &:hover {
+        border-color: var(--text-faint);
+        background: var(--bg-hover);
+      }
+
+      &.active {
+        border-color: var(--brand);
+        background: var(--brand-soft);
+        box-shadow: inset 0 0 0 1px var(--brand);
+      }
+
+      .run-item-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 6px;
+
+        .run-name {
+          font-weight: 600;
+          font-size: 13.5px;
+          color: var(--text-1);
+        }
+
+        .run-proj {
+          font-size: 11.5px;
+          color: var(--text-3);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+      }
+
+      .run-item-sub {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+        font-size: 11px;
+        color: var(--text-3);
+      }
+    }
+  }
+
+  .run-empty {
+    padding: 14px;
+    text-align: center;
+    color: var(--text-3);
+    font-size: 12px;
+    background: var(--bg-fill);
+    border: 1px dashed var(--border);
+    border-radius: 5px;
+  }
+
+  .transfer-note {
+    margin-top: 8px;
+    font-size: 11.5px;
+    color: var(--text-3);
+    background: var(--bg-fill);
+    border-radius: 4px;
+    padding: 7px 10px;
+    line-height: 1.6;
+
+    b { color: var(--text-2); }
+  }
+
+  .start-note {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--text-3);
   }
   
   .model-family {

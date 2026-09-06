@@ -9,6 +9,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -121,7 +122,29 @@ async def get_train_run(run_id: int, db: AsyncSession = Depends(get_db)):
     data["is_running"] = bool(task and task.get("running"))
     if task and task.get("progress"):
         data["progress"] = task["progress"]
+    # 所属工程名称（完成通知等场景需要）
+    proj = (await db.execute(select(Project).where(Project.id == run.project_id))).scalar_one_or_none()
+    data["project_name"] = proj.name if proj else None
     return data
+
+
+@router.get("/training/active", response_model=list)
+async def list_active_trainings():
+    """列出当前所有正在运行的训练任务（供前端全局完成提醒轮询）"""
+    items = []
+    for run_id, task in training_tasks.items():
+        if not task.get("running"):
+            continue
+        p = task.get("progress") or {}
+        items.append({
+            "run_id": run_id,
+            "project_id": task.get("project_id"),
+            "project_name": task.get("project_name"),
+            "model_name": task.get("model_name"),
+            "epoch": p.get("epoch", 0),
+            "epochs": p.get("epochs", 0),
+        })
+    return items
 
 
 @router.post("/projects/{project_id}/train", response_model=dict)
@@ -130,7 +153,7 @@ async def start_training(
     config: TrainConfig,
     db: AsyncSession = Depends(get_db),
 ):
-    """启动真实 YOLO 训练"""
+    """启动真实 YOLO 训练（支持迁移学习：以其他工程 best.pt 为起始权重）"""
     proj = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -148,12 +171,60 @@ async def start_training(
     if not proj.classes:
         raise HTTPException(status_code=400, detail="工程未配置类别")
 
-    # 校验基线模型已下载（防止绕过前端直接调用）
-    if not _model_file_exists(config.model_name):
-        raise HTTPException(
-            status_code=400,
-            detail=f"基线模型 {config.model_name} 未下载，请先在模型列表下载",
-        )
+    # ── 起始权重来源解析 ──────────────────────────────
+    # 需要与工程标注类型匹配的训练任务
+    need_seg = project_need_seg(proj.anno_type)
+
+    weights_path = None
+    source_label = f"官方基线 {config.model_name}（COCO 预训练）"
+    source_project_name = None
+
+    if config.pretrain_source == "run":
+        # 迁移学习：使用指定训练 run 的 best.pt（任意工程，含本工程）
+        if not config.pretrain_run_id:
+            raise HTTPException(status_code=400, detail="迁移学习需指定来源训练 run (pretrain_run_id)")
+        src = (await db.execute(
+            select(TrainRun).where(TrainRun.id == config.pretrain_run_id)
+        )).scalar_one_or_none()
+        if not src:
+            raise HTTPException(status_code=404, detail="来源训练记录不存在")
+        if src.status != "completed":
+            raise HTTPException(
+                status_code=400,
+                detail=f"来源 run {src.id} 状态为 {src.status}，仅 completed 的权重可用于迁移",
+            )
+        src_pt = settings.OUTPUT_DIR / str(src.project_id) / f"run_{src.id}" / "weights" / "best.pt"
+        if not src_pt.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"来源 run {src.id} 的权重文件缺失（{src_pt}），请先重新训练该 run",
+            )
+        # 任务类型必须匹配（detect 权重不能训分割工程，反之亦然）
+        if model_task(src.model_name) != ("segment" if need_seg else "detect"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"模型任务不匹配：当前工程为{'实例分割' if need_seg else '目标检测'}，"
+                       f"来源模型 {src.model_name} 为 {model_task(src.model_name)}",
+            )
+        src_proj = (await db.execute(
+            select(Project).where(Project.id == src.project_id)
+        )).scalar_one_or_none()
+        source_project_name = src_proj.name if src_proj else f"工程 {src.project_id}"
+        weights_path = str(src_pt)
+        source_label = f"工程「{source_project_name}」run {src.id}（{src.model_name}）"
+    else:
+        # 官方基线：校验权重已下载（防止绕过前端直接调用）
+        if not _model_file_exists(config.model_name):
+            raise HTTPException(
+                status_code=400,
+                detail=f"基线模型 {config.model_name} 未下载，请先在模型列表下载",
+            )
+        if model_task(config.model_name) != ("segment" if need_seg else "detect"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"模型任务不匹配：当前工程为{'实例分割' if need_seg else '目标检测'}，"
+                       f"所选模型 {config.model_name} 为 {model_task(config.model_name)}",
+            )
 
     run = TrainRun(
         project_id=project_id,
@@ -172,17 +243,25 @@ async def start_training(
         "history": [],
         "log": f"[{datetime.now().strftime('%H:%M:%S')}] 准备数据集...\n",
     }}
+    # 附加元信息（/training/active 完成提醒用）
+    task_info["project_id"] = project_id
+    task_info["project_name"] = proj.name
+    task_info["model_name"] = config.model_name
+    task_info["pretrain_source"] = config.pretrain_source
     training_tasks[run.id] = task_info
 
     thread = threading.Thread(
         target=_run_real_training,
-        args=(run.id, project_id, config.model_dump()),
+        args=(run.id, project_id, config.model_dump(), weights_path, source_label),
         daemon=True,
         name=f"train-run-{run.id}",
     )
     thread.start()
 
-    return {**run.to_dict(), "message": f"训练已启动（{config.model_name}）"}
+    msg = f"训练已启动（{config.model_name}）"
+    if weights_path:
+        msg = f"训练已启动 · 迁移起始权重: {source_label}"
+    return {**run.to_dict(), "message": msg, "pretrain_source": config.pretrain_source}
 
 
 @router.post("/runs/{run_id}/cancel", response_model=MessageResponse)
@@ -198,7 +277,9 @@ async def cancel_training(run_id: int, db: AsyncSession = Depends(get_db)):
 
 
 # ─── 真实训练执行 ────────────────────────────────────────────
-def _run_real_training(run_id: int, project_id: int, config: dict):
+def _run_real_training(run_id: int, project_id: int, config: dict,
+                       weights_path: Optional[str] = None,
+                       source_label: Optional[str] = None):
     task = training_tasks[run_id]
     progress = task["progress"]
 
@@ -219,12 +300,17 @@ def _run_real_training(run_id: int, project_id: int, config: dict):
         _db_update(run_id, status="running", started_at=datetime.utcnow().isoformat())
         progress["phase"] = "training"
 
-        # 2. 加载模型
+        # 2. 加载起始权重（迁移学习 best.pt 或官方基线）
         from ultralytics import YOLO
         import torch
 
-        log_line(f"加载基线模型 {config['model_name']} ...")
-        model = YOLO(config["model_name"])
+        start_pt = weights_path or config["model_name"]
+        if weights_path:
+            log_line(f"迁移学习起始权重: {source_label}")
+            log_line(f"  权重文件: {weights_path}")
+        else:
+            log_line(f"加载官方基线模型 {config['model_name']} ...")
+        model = YOLO(start_pt)
 
         device = "mps" if torch.backends.mps.is_available() else "cpu"
         log_line(f"计算设备: {device}")
@@ -462,6 +548,24 @@ AVAILABLE_MODELS = [
     {"id": "yolo26s-seg", "name": "YOLO26s-seg", "family": "YOLO26-Seg", "task": "segment", "size_mb": 28.5, "desc": "最新均衡分割"},
 ]
 
+# 模型 id → task 映射（迁移学习 / 自动标注任务校验共用）
+_MODEL_TASK_MAP = {m["id"]: m["task"] for m in AVAILABLE_MODELS}
+
+
+def model_task(model_name: str) -> str:
+    """推断模型权重的任务类型: detect / segment（官方列表优先，名称带 -seg 兜底）"""
+    if model_name in _MODEL_TASK_MAP:
+        return _MODEL_TASK_MAP[model_name]
+    if model_name.lower().endswith("-seg"):
+        return "segment"
+    return "detect"
+
+
+def project_need_seg(anno_type: str) -> bool:
+    """工程标注类型 → 需要的训练任务: polygon 工程 → 实例分割模型"""
+    return anno_type == "polygon"
+
+
 # 下载任务进度: {model_id: {"status", "progress", "size_mb", "error"}}
 download_tasks = {}
 
@@ -498,6 +602,54 @@ def _is_downloaded(model_id: str) -> bool:
 async def list_available_models():
     """列出可用基线模型（含是否已下载）"""
     return [{**m, "downloaded": _is_downloaded(m["id"])} for m in AVAILABLE_MODELS]
+
+
+@router.get("/projects/{project_id}/transfer-sources")
+async def list_transfer_sources(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    迁移学习可用起始权重：
+      base = 已下载的官方基线（按工程类型过滤）
+      runs = 各工程已完成且保留权重的训练 run（按任务类型过滤）
+    """
+    proj = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    need_seg = project_need_seg(proj.anno_type)
+    task = "segment" if need_seg else "detect"
+
+    base = [
+        {"id": m["id"], "name": m["name"], "family": m["family"],
+         "desc": m["desc"], "size_mb": m["size_mb"]}
+        for m in AVAILABLE_MODELS
+        if m["task"] == task and _is_downloaded(m["id"])
+    ]
+
+    result = await db.execute(
+        select(TrainRun).where(TrainRun.status == "completed").order_by(TrainRun.completed_at.desc())
+    )
+    runs_out = []
+    for r in result.scalars().all():
+        if model_task(r.model_name) != task:
+            continue
+        pt = settings.OUTPUT_DIR / str(r.project_id) / f"run_{r.id}" / "weights" / "best.pt"
+        if not pt.exists():
+            continue
+        proj_name = r.project.name if r.project else f"工程 {r.project_id}"
+        d = r.to_dict()
+        d["project_name"] = proj_name
+        d["weights_size_mb"] = round(pt.stat().st_size / 1024 / 1024, 1)
+        runs_out.append(d)
+
+    return {
+        "anno_type": proj.anno_type,
+        "need_seg": need_seg,
+        "base": base,
+        "runs": runs_out,
+    }
 
 
 @router.get("/models/download-status/{model_id}")

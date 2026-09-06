@@ -117,8 +117,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElNotification } from 'element-plus'
+import { trainApi } from '@/api'
 
 const route = useRoute()
 const currentProject = ref(null)
@@ -193,6 +195,173 @@ watch(currentProjectId, async (newId) => {
     currentProject.value = null
   }
 }, { immediate: true })
+
+// ─── 训练完成全局提醒（标题闪烁 + 提示音 + 通知）────────
+// 无论停留在哪个页面，训练结束都能收到提醒；开关在训练页（localStorage yolo_notify_enabled）
+const notifyEnabled = () => localStorage.getItem('yolo_notify_enabled') !== '0'
+
+// 声音：WebAudio 提示音（需用户交互解锁 AudioContext）
+let audioCtx = null
+let audioUnlocked = false
+
+const unlockAudio = () => {
+  ensureAudio()
+  audioUnlocked = true
+  window.removeEventListener('pointerdown', unlockAudio)
+  window.removeEventListener('keydown', unlockAudio)
+}
+
+const ensureAudio = () => {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext
+    if (AC) audioCtx = new AC()
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {})
+  }
+}
+
+const tone = (freq, startIn, dur) => {
+  if (!audioCtx) return
+  try {
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.type = 'sine'
+    osc.frequency.value = freq
+    const t0 = audioCtx.currentTime + startIn
+    gain.gain.setValueAtTime(0.0001, t0)
+    gain.gain.exponentialRampToValueAtTime(0.16, t0 + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur)
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    osc.start(t0)
+    osc.stop(t0 + dur + 0.05)
+  } catch (e) {}
+}
+
+const playDoneSound = () => {
+  ensureAudio()
+  tone(880, 0, 0.16)      // 叮
+  tone(1174.66, 0.2, 0.26) // 咚（高）
+}
+
+const playFailSound = () => {
+  ensureAudio()
+  tone(392, 0, 0.2)       // 低
+  tone(311.13, 0.24, 0.3)
+}
+
+// 标题闪烁（页面在后台时）
+let blinkData = null
+
+const startBlink = (mark) => {
+  stopBlink()
+  const base = document.title
+  let on = true
+  blinkData = {
+    mark,
+    timer: setInterval(() => {
+      on = !on
+      document.title = on ? `${mark} · ${base}` : base
+    }, 800),
+  }
+}
+
+const stopBlink = () => {
+  if (!blinkData) return
+  clearInterval(blinkData.timer)
+  if (document.title.startsWith(blinkData.mark)) {
+    document.title = document.title.slice(blinkData.mark.length + 3) // 去掉 "✓ 训练完成 · "
+  }
+  blinkData = null
+}
+
+const onVisibilityChange = () => {
+  if (!document.hidden) stopBlink()
+}
+
+// 训练状态轮询：记录 running → 消失即查询终态 → 提醒
+const knownRunning = new Map() // run_id -> {project_name, model_name}
+let trainingPollTimer = null
+
+const notifyTrainDone = (run) => {
+  const ok = run.status === 'completed'
+  const who = run.project_name ? `工程「${run.project_name}」` : `run ${run.id}`
+  const mark = ok ? '✓ 训练完成' : '✗ 训练失败'
+  const title = `${ok ? '训练完成' : '训练失败'} · ${who}`
+  const summary = ok
+    ? `${run.model_name} · ${run.epochs} 轮 · mAP@50 ${run.final_map50 ? run.final_map50.toFixed(4) : '-'}`
+    : `${run.model_name} · ${run.epochs} 轮 · 训练异常，请查看训练日志`
+
+  if (document.hidden) {
+    startBlink(mark)
+    ok ? playDoneSound() : playFailSound()
+  } else {
+    ElNotification({
+      title,
+      message: summary,
+      type: ok ? 'success' : 'error',
+      duration: 8000,
+    })
+    ok ? playDoneSound() : playFailSound()
+  }
+}
+
+const pollTraining = async () => {
+  if (!notifyEnabled()) {
+    knownRunning.clear()
+    return
+  }
+  let active = []
+  try {
+    active = await trainApi.active()
+  } catch (e) {
+    return // 网络抖动跳过本轮
+  }
+
+  const activeIds = new Set(active.map((a) => a.run_id))
+  // 之前 running、现在不在列表 → 查询终态
+  const finishedIds = [...knownRunning.keys()].filter((id) => !activeIds.has(id))
+  for (const id of finishedIds) {
+    try {
+      const run = await trainApi.getRun(id)
+      if (run.status === 'completed' || run.status === 'failed') {
+        notifyTrainDone(run)
+      } else {
+        knownRunning.set(id, {}) // 仍在运行（或未知），继续跟踪
+      }
+    } catch (e) {
+      // 查询失败：保留跟踪，下轮再查
+      knownRunning.set(id, {})
+    }
+  }
+
+  // 更新本轮 running 集合
+  const next = new Map()
+  for (const a of active) {
+    next.set(a.run_id, { project_name: a.project_name, model_name: a.model_name })
+  }
+  knownRunning.clear()
+  for (const [k, v] of next) knownRunning.set(k, v)
+}
+
+onMounted(() => {
+  window.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('pointerdown', unlockAudio)
+  window.addEventListener('keydown', unlockAudio)
+  trainingPollTimer = setInterval(pollTraining, 2500)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('pointerdown', unlockAudio)
+  window.removeEventListener('keydown', unlockAudio)
+  if (trainingPollTimer) clearInterval(trainingPollTimer)
+  stopBlink()
+})
+
+// 路由切换时标题由 router 重写，先停下闪烁避免覆盖
+watch(() => route.fullPath, () => stopBlink())
 
 loadSysInfo()
 </script>

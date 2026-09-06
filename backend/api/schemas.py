@@ -93,6 +93,11 @@ class TrainConfig(BaseModel):
     epochs: int = Field(default=100, ge=1, le=1000)
     img_size: int = Field(default=632, ge=320, le=1280)
     batch_size: int = Field(default=16, ge=1, le=64)
+    # 迁移学习：起始权重来源
+    #   "base" = 官方预训练基线（COCO 80 类，需先下载）
+    #   "run"  = 复用其它（或本）工程已完成训练 run 的 best.pt
+    pretrain_source: str = Field(default="base", pattern="^(base|run)$")
+    pretrain_run_id: Optional[int] = None
 
 
 class TrainRunResponse(BaseModel):
