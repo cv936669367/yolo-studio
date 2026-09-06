@@ -10,10 +10,11 @@ DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 MODEL_DIR = DATA_DIR / "models"
 OUTPUT_DIR = DATA_DIR / "outputs"
+TILE_DIR = DATA_DIR / "tiles"
 DB_PATH = DATA_DIR / "yolo_studio.db"
 
 # Ensure directories exist
-for d in [DATA_DIR, UPLOAD_DIR, MODEL_DIR, OUTPUT_DIR]:
+for d in [DATA_DIR, UPLOAD_DIR, MODEL_DIR, OUTPUT_DIR, TILE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 

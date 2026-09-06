@@ -10,7 +10,7 @@ import os
 
 from core.config import settings, DB_PATH
 from core.database import init_db
-from api import projects, images, annotations, training, inference, ai_annotate, auto_label
+from api import projects, images, annotations, training, inference, ai_annotate, auto_label, tiles
 
 
 @asynccontextmanager
@@ -53,6 +53,11 @@ if settings.UPLOAD_DIR.exists():
 if settings.OUTPUT_DIR.exists():
     app.mount("/outputs", StaticFiles(directory=str(settings.OUTPUT_DIR)), name="outputs")
 
+# Mount static files for big-image tiles
+from core.config import TILE_DIR
+if TILE_DIR.exists():
+    app.mount("/tiles", StaticFiles(directory=str(TILE_DIR)), name="tiles")
+
 # Register routers
 app.include_router(projects.router, prefix="/api")
 app.include_router(images.router, prefix="/api")
@@ -61,6 +66,7 @@ app.include_router(training.router, prefix="/api")
 app.include_router(inference.router, prefix="/api")
 app.include_router(ai_annotate.router, prefix="/api")
 app.include_router(auto_label.router, prefix="/api")
+app.include_router(tiles.router, prefix="/api")
 
 
 @app.get("/")

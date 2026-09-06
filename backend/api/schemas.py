@@ -15,6 +15,7 @@ class ProjectCreate(BaseModel):
     train_ratio: float = Field(default=0.7, ge=0.5, le=0.9)
     val_ratio: float = Field(default=0.15, ge=0.05, le=0.25)
     test_ratio: float = Field(default=0.15, ge=0.05, le=0.25)
+    class_colors: Optional[dict] = None  # {"类别": "#rrggbb"}，缺省自动分配
 
 
 class ProjectUpdate(BaseModel):
@@ -22,6 +23,7 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
     anno_type: Optional[str] = Field(None, pattern="^(rectangle|polygon)$")
     classes: Optional[list[str]] = None
+    class_colors: Optional[dict] = None
     train_ratio: Optional[float] = Field(None, ge=0.5, le=0.9)
     val_ratio: Optional[float] = Field(None, ge=0.05, le=0.25)
     test_ratio: Optional[float] = Field(None, ge=0.05, le=0.25)
@@ -36,12 +38,24 @@ class ProjectResponse(BaseModel):
     val_ratio: float
     test_ratio: float
     classes: list
+    class_colors: Optional[dict]
     image_count: int
     train_run_count: int
     created_at: Optional[str]
     updated_at: Optional[str]
     
     model_config = {"from_attributes": True}
+
+
+# ─── Class Management Schemas ─────────────────────────────
+class ClassRenameRequest(BaseModel):
+    old_name: str = Field(..., min_length=1, max_length=200)
+    new_name: str = Field(..., min_length=1, max_length=200)
+
+
+class ClassColorRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    color: str = Field(..., pattern="^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$")
 
 
 # ─── Image Schemas ────────────────────────────────────────
@@ -98,6 +112,15 @@ class TrainConfig(BaseModel):
     #   "run"  = 复用其它（或本）工程已完成训练 run 的 best.pt
     pretrain_source: str = Field(default="base", pattern="^(base|run)$")
     pretrain_run_id: Optional[int] = None
+    # ── 高级超参（None = 不覆盖，沿用 ultralytics 默认）──
+    lr0: Optional[float] = Field(None, ge=1e-6, le=1.0)          # 初始学习率
+    optimizer: Optional[str] = Field(None, pattern="^(auto|SGD|Adam|AdamW|NAdam|RMSProp)$")
+    patience: Optional[int] = Field(None, ge=0, le=500)           # 早停轮数，0=关闭
+    seed: Optional[int] = Field(None, ge=0, le=2**31 - 1)         # 随机种子
+    mosaic: Optional[float] = Field(None, ge=0.0, le=1.0)         # Mosaic 概率
+    mixup: Optional[float] = Field(None, ge=0.0, le=1.0)          # MixUp 概率
+    fliplr: Optional[float] = Field(None, ge=0.0, le=1.0)         # 水平翻转概率
+    degrees: Optional[float] = Field(None, ge=0.0, le=180.0)      # 随机旋转角度上限
 
 
 class TrainRunResponse(BaseModel):
@@ -108,6 +131,7 @@ class TrainRunResponse(BaseModel):
     img_size: int
     batch_size: int
     status: str
+    hyperparams: Optional[dict] = None
     final_map50: Optional[float]
     final_map50_95: Optional[float]
     precision: Optional[float]

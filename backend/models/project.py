@@ -24,8 +24,11 @@ class Project(Base):
     val_ratio: Mapped[float] = mapped_column(Float, default=0.15)
     test_ratio: Mapped[float] = mapped_column(Float, default=0.15)
     
-    # Class labels as JSON array
+    # Class labels as JSON array（顺序即训练 data.yaml 的类别索引，勿随意重排）
     classes: Mapped[list] = mapped_column(JSON, default=list)
+    
+    # 类别颜色映射 {"className": "#rrggbb"}（缺失时前端用默认调色板）
+    class_colors: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -48,6 +51,7 @@ class Project(Base):
             "val_ratio": self.val_ratio,
             "test_ratio": self.test_ratio,
             "classes": self.classes or [],
+            "class_colors": self.class_colors or {},
             "image_count": len(self.images) if images_loaded else 0,
             "train_run_count": len(self.train_runs) if runs_loaded else 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,

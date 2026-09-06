@@ -48,14 +48,18 @@ async def list_images(
     return [img.to_dict() for img in images]
 
 
-@router.post("/projects/{project_id}/images/upload", response_model=List[ImageResponse])
+@router.post("/projects/{project_id}/images/upload")
 async def upload_images(
     project_id: int,
     files: List[UploadFile] = File(...),
     split: str = Form(default="train"),
     db: AsyncSession = Depends(get_db)
 ):
-    """Upload multiple images to a project"""
+    """
+    Upload multiple images to a project.
+    同工程内 sha256 内容去重：重复文件跳过，不入库、不落盘。
+    返回 {created:[...], duplicates:[{original_name, exists_id, exists_name}], skipped:[...]}
+    """
     # Verify project exists
     proj_result = await db.execute(select(Project).where(Project.id == project_id))
     project = proj_result.scalar_one_or_none()
@@ -67,14 +71,34 @@ async def upload_images(
     
     upload_dir = get_project_upload_dir(project_id)
     uploaded_images = []
-    
+    duplicates = []
+    skipped = []
+
+    import hashlib
     from PIL import Image as PILImage
-    
+
     for file in files:
         # Validate file type
         if not file.content_type or not file.content_type.startswith("image/"):
+            skipped.append({"original_name": file.filename or "未知", "reason": "非图片类型"})
             continue
-        
+
+        content = await file.read()
+        sha = hashlib.sha256(content).hexdigest()
+
+        # 同工程去重：已存在相同内容则跳过
+        dup = (await db.execute(
+            select(Image).where(Image.project_id == project_id, Image.sha256 == sha)
+        )).scalar_one_or_none()
+        if dup:
+            duplicates.append({
+                "original_name": file.filename,
+                "exists_id": dup.id,
+                "exists_name": dup.original_name,
+                "split": dup.split,
+            })
+            continue
+
         # Generate unique filename
         ext = os.path.splitext(file.filename)[1].lower() or ".jpg"
         unique_name = f"{uuid.uuid4().hex}{ext}"
@@ -82,7 +106,6 @@ async def upload_images(
         
         # Save file
         with open(file_path, "wb") as f:
-            content = await file.read()
             f.write(content)
         
         # Get image dimensions
@@ -101,6 +124,7 @@ async def upload_images(
             width=width,
             height=height,
             file_size=file_size,
+            sha256=sha,
             split=split,
             file_path=f"/uploads/{project_id}/{unique_name}",
         )
@@ -108,7 +132,11 @@ async def upload_images(
         uploaded_images.append(image)
     
     await db.flush()
-    return [img.to_dict() for img in uploaded_images]
+    return {
+        "created": [i.to_dict() for i in uploaded_images],
+        "duplicates": duplicates,
+        "skipped": skipped,
+    }
 
 
 @router.delete("/images/{image_id}", response_model=MessageResponse)
@@ -116,7 +144,7 @@ async def delete_image(
     image_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete an image and its annotations"""
+    """Delete an image, its annotations and tile cache"""
     result = await db.execute(select(Image).where(Image.id == image_id))
     image = result.scalar_one_or_none()
     if not image:
@@ -126,6 +154,10 @@ async def delete_image(
     full_path = os.path.join(settings.UPLOAD_DIR, str(image.project_id), image.filename)
     if os.path.exists(full_path):
         os.remove(full_path)
+    
+    # Delete big-image tile cache（若存在）
+    from api.tiles import remove_image_tiles
+    remove_image_tiles(image.project_id, image.id)
     
     await db.delete(image)
     return MessageResponse(message="Image deleted successfully")
@@ -147,12 +179,14 @@ async def batch_delete_images(
     if not images:
         raise HTTPException(status_code=404, detail="图片不存在")
 
-    # 删除本地文件
+    # 删除本地文件与瓦片缓存
     import os as _os
+    from api.tiles import remove_image_tiles
     for img in images:
         full_path = _os.path.join(settings.UPLOAD_DIR, str(img.project_id), img.filename)
         if _os.path.exists(full_path):
             _os.remove(full_path)
+        remove_image_tiles(img.project_id, img.id)
 
     for img in images:
         await db.delete(img)  # 级联删除标注

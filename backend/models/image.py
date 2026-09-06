@@ -25,6 +25,9 @@ class Image(Base):
     
     # File size in bytes
     file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # 文件内容哈希 sha256（同工程上传去重）
+    sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     
     # Data split: "train", "val", or "test"
     split: Mapped[str] = mapped_column(String(20), default="train")
@@ -51,6 +54,7 @@ class Image(Base):
             "width": self.width,
             "height": self.height,
             "file_size": self.file_size,
+            "sha256": self.sha256,
             "split": self.split,
             "file_path": self.file_path,
             "created_at": self.created_at.isoformat() if self.created_at else None,

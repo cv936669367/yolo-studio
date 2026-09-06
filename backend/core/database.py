@@ -33,7 +33,27 @@ async def get_db():
 
 
 async def init_db():
-    """Initialize database tables"""
+    """Initialize database tables + 轻量列迁移（老库补新列）"""
     from models import project, image, annotation, train_run  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_ensure_columns)
+
+
+def _ensure_columns(sync_conn):
+    """为既有数据库补齐新版本新增的列（幂等）"""
+    from sqlalchemy import text
+
+    def col_exists(table: str, col: str) -> bool:
+        rows = sync_conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        return any(r[1] == col for r in rows)
+
+    adds = {
+        "train_runs": [("hyperparams", "TEXT")],     # 训练超参快照（JSON）
+        "projects": [("class_colors", "TEXT")],      # 类别→颜色映射（JSON）
+        "images": [("sha256", "VARCHAR(64)")],       # 内容哈希（同工程去重）
+    }
+    for table, cols in adds.items():
+        for name, col_type in cols:
+            if not col_exists(table, name):
+                sync_conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}"))

@@ -25,6 +25,9 @@ class TrainRun(Base):
     # Status: "pending", "running", "completed", "failed"
     status: Mapped[str] = mapped_column(String(20), default="pending")
     
+    # 训练超参快照（lr0/optimizer/patience/seed/增强参数…）
+    hyperparams: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    
     # Results (filled after training completes)
     final_map50: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     final_map50_95: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -58,6 +61,7 @@ class TrainRun(Base):
             "img_size": self.img_size,
             "batch_size": self.batch_size,
             "status": self.status,
+            "hyperparams": self.hyperparams or {},
             "final_map50": self.final_map50,
             "final_map50_95": self.final_map50_95,
             "precision": self.precision,

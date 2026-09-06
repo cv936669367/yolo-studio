@@ -251,33 +251,81 @@
           <p class="tip-text">当前比例：{{ Math.round(project.train_ratio * 100) }} / {{ Math.round(project.val_ratio * 100) }} / {{ Math.round(project.test_ratio * 100) }}</p>
         </el-card>
 
-        <!-- 标注类别 -->
+        <!-- 标注类别（重命名 / 改色 / 删除联动清理标注） -->
         <el-card shadow="never" header="标注类别" style="margin-top: 12px;">
-          <div class="class-list">
-            <el-tag
-              v-for="cls in project.classes"
-              :key="cls"
-              closable
-              type="primary"
-              effect="plain"
-              size="default"
-              @close="removeClass(cls)"
-            >
-              {{ cls }}
-            </el-tag>
-            <el-input
-              v-if="showClassInput"
-              ref="classInputRef"
-              v-model="newClass"
-              size="small"
-              placeholder="类别名回车确认"
-              style="width: 120px;"
-              @keyup.enter="addClass"
-              @blur="showClassInput = false"
-            />
-            <el-button v-else size="small" plain @click="openClassInput">
-              <el-icon><Plus /></el-icon> 添加
-            </el-button>
+          <el-tooltip
+            placement="top-start"
+            :show-after="150"
+            :content="'类别顺序 = 训练 data.yaml 类别索引：改色/重命名不动顺序；删除某类别会联动清除该类别全部标注'"
+          >
+            <div class="cm-tip">
+              <el-icon :size="12"><InfoFilled /></el-icon>
+              顺序即类别索引 · 删除联动清理标注
+            </div>
+          </el-tooltip>
+
+          <div class="class-mgmt">
+            <div v-for="cls in project.classes" :key="cls" class="cm-row">
+              <el-color-picker
+                :model-value="classColorOf(cls)"
+                :predefine="COLOR_SWATCHES"
+                size="small"
+                @change="(c) => updateClassColor(cls, c)"
+              />
+              <template v-if="renamingClass === cls">
+                <el-input
+                  ref="renameInputRef"
+                  v-model="renameValue"
+                  size="small"
+                  maxlength="200"
+                  class="cm-rename-input"
+                  @keyup.enter="submitRename(cls)"
+                  @blur="submitRename(cls)"
+                />
+              </template>
+              <template v-else>
+                <span class="cm-dot" :style="{ background: classColorOf(cls) }"></span>
+                <span class="cm-name" :title="cls">{{ cls }}</span>
+              </template>
+              <span class="cm-count mono">{{ classImageCounts[cls] || 0 }} 图 · {{ classCounts[cls] || 0 }} 标注</span>
+              <el-tooltip content="重命名（同步更新该类别全部标注）">
+                <el-button size="small" text @click="beginRename(cls)">
+                  <el-icon><EditPen /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-popconfirm
+                :title="`删除类别「${cls}」？将同时删除该类别 ${classCounts[cls] || 0} 个标注`"
+                :description="project.train_run_count ? '历史训练 run 及其数据集不受影响；后续训练将不含此类别' : '不可恢复'"
+                width="280"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm="deleteClassRow(cls)"
+              >
+                <template #reference>
+                  <el-button size="small" text type="danger">
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </template>
+              </el-popconfirm>
+            </div>
+
+            <div v-if="!project.classes?.length" class="cm-empty">暂无类别，点击下方添加</div>
+
+            <div class="cm-add-row">
+              <el-input
+                v-if="showClassInput"
+                ref="classInputRef"
+                v-model="newClass"
+                size="small"
+                placeholder="类别名，回车确认"
+                style="flex: 1;"
+                @keyup.enter="addClass"
+                @blur="showClassInput = false"
+              />
+              <el-button v-else size="small" plain style="width: 100%;" @click="openClassInput">
+                <el-icon><Plus /></el-icon> 添加类别
+              </el-button>
+            </div>
           </div>
         </el-card>
       </div>
@@ -289,7 +337,8 @@
 import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { projectApi, imageApi } from '@/api'
+import { projectApi, imageApi, annotationApi } from '@/api'
+import { getClassColor, CLASS_PALETTE } from '@/utils/classColors'
 
 const route = useRoute()
 const router = useRouter()
@@ -310,6 +359,73 @@ const filterTab = ref('all')
 const annoFilter = ref('all') // all | annotated | unannotated
 const PAGE_SIZE = 24
 const visibleCount = ref(PAGE_SIZE)
+
+// ─── 类别管理状态 ─────────────────────────────
+const renamingClass = ref(null)  // 正在重命名的类别名
+const renameValue = ref('')
+const renameInputRef = ref(null)
+const classCounts = ref({})      // {className: 标注条数}
+const classImageCounts = ref({}) // {className: 含该类别的图片数}
+const COLOR_SWATCHES = [...CLASS_PALETTE]
+
+// 类别颜色（自定义优先 → 顺序调色板）
+const classColorOf = (cls) => getClassColor(cls, project.value.class_colors || {}, project.value.classes || [])
+
+const loadClassCounts = async () => {
+  try {
+    const s = await annotationApi.summary(projectId.value)
+    classCounts.value = s.class_counts || {}
+    classImageCounts.value = s.class_image_counts || {}
+  } catch (e) {}
+}
+
+const beginRename = async (cls) => {
+  renamingClass.value = cls
+  renameValue.value = cls
+  await nextTick()
+  renameInputRef.value?.focus()
+}
+
+const submitRename = async (oldName) => {
+  const newName = (renameValue.value || '').trim()
+  renamingClass.value = null
+  if (!newName || newName === oldName) return
+  if (!/^[\w-]{1,200}$/.test(newName)) {
+    ElMessage.error('类别名仅支持中文/字母/数字/下划线/短横线')
+    return
+  }
+  if ((project.value.classes || []).includes(newName)) {
+    ElMessage.error(`类别 ${newName} 已存在`)
+    return
+  }
+  try {
+    const res = await projectApi.renameClass(projectId.value, { old_name: oldName, new_name: newName })
+    ElMessage.success(res.message || '类别已重命名')
+    project.value = res.project
+    loadClassCounts() // 标注统计随改名迁移
+  } catch (e) {
+    // 失败：回退到原值（错误提示由拦截器弹出）
+  }
+}
+
+const updateClassColor = async (cls, color) => {
+  if (!color) return
+  try {
+    const res = await projectApi.setClassColor(projectId.value, { name: cls, color })
+    project.value = res.project
+  } catch (e) {
+    // 拦截器已提示
+  }
+}
+
+const deleteClassRow = async (cls) => {
+  try {
+    const res = await projectApi.deleteClass(projectId.value, cls)
+    ElMessage.success(res.message || '类别已删除')
+    project.value = res.project
+    loadClassCounts()
+  } catch (e) {}
+}
 
 // ─── 批量选择状态 ─────────────────────────────
 const selectedIds = ref([]) // 跨筛选保留
@@ -453,6 +569,8 @@ const loadImages = async () => {
   } finally {
     loading.value = false
   }
+  // 图片变化会连带标注数量变化 → 同步刷新类别标注计数（保持与总数一致）
+  loadClassCounts()
 }
 
 const handleFileChange = (file) => {
@@ -465,8 +583,20 @@ const handleUpload = async () => {
   if (pendingFiles.value.length === 0) return
   uploading.value = true
   try {
-    await imageApi.upload(projectId.value, pendingFiles.value, defaultSplit.value)
-    ElMessage.success(`成功上传 ${pendingFiles.value.length} 张图片`)
+    const res = await imageApi.upload(projectId.value, pendingFiles.value, defaultSplit.value)
+    const created = res.created?.length || 0
+    const dups = res.duplicates || []
+    const skipped = res.skipped || []
+    const parts = [`成功上传 ${created} 张`]
+    if (dups.length) {
+      const sample = dups.slice(0, 3).map(d => `「${d.original_name}」= 已有「${d.exists_name}」`).join('、')
+      parts.push(`跳过重复 ${dups.length} 张（${sample}${dups.length > 3 ? '…' : ''}）`)
+      ElMessage.warning(parts.join('，'), 6000)
+    } else if (skipped.length) {
+      ElMessage.warning(`上传完成：${parts.join('，')}；${skipped.length} 张非图片被忽略`, 5000)
+    } else {
+      ElMessage.success(parts.join('，'))
+    }
     pendingFiles.value = []
     loadImages()
   } catch (e) {
@@ -517,24 +647,33 @@ const openClassInput = async () => {
 }
 
 const addClass = async () => {
-  const cls = newClass.value.trim().toLowerCase()
-  if (!cls || (project.value.classes || []).includes(cls)) return
+  const cls = (newClass.value || '').trim()
+  if (!cls) {
+    showClassInput.value = false
+    return
+  }
+  if (!/^[\w-]{1,200}$/.test(cls)) {
+    ElMessage.error('类别名仅支持中文/字母/数字/下划线/短横线')
+    return
+  }
+  if ((project.value.classes || []).includes(cls)) {
+    ElMessage.warning(`类别 ${cls} 已存在`)
+    newClass.value = ''
+    showClassInput.value = false
+    return
+  }
   const classes = [...(project.value.classes || []), cls]
-  await projectApi.update(projectId.value, { classes })
-  project.value.classes = classes
-  newClass.value = ''
-  showClassInput.value = false
-}
-
-const removeClass = async (cls) => {
-  const classes = (project.value.classes || []).filter(c => c !== cls)
-  await projectApi.update(projectId.value, { classes })
-  project.value.classes = classes
+  const colors = { ...(project.value.class_colors || {}), [cls]: classColorOf(cls) }
+  try {
+    project.value = await projectApi.update(projectId.value, { classes, class_colors: colors })
+    newClass.value = ''
+    showClassInput.value = false
+  } catch (e) {}
 }
 
 onMounted(() => {
   loadProject()
-  loadImages()
+  loadImages() // 内部会同步刷新类别标注计数
 })
 </script>
 
@@ -956,6 +1095,80 @@ onMounted(() => {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+    }
+  }
+
+  // ─── 类别管理 ────────────────────────────────
+  .cm-tip {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-bottom: 8px;
+    cursor: help;
+  }
+
+  .class-mgmt {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    .cm-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      background: var(--bg-fill);
+      border: 1px solid var(--border-light);
+      border-radius: 5px;
+      min-height: 32px;
+
+      .cm-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 3px;
+        flex: 0 0 auto;
+      }
+
+      .cm-name {
+        flex: 1;
+        min-width: 0;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-1);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .cm-rename-input {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .cm-count {
+        flex: 0 0 auto;
+        font-size: 11px;
+        color: var(--text-3);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        padding: 1px 6px;
+      }
+    }
+
+    .cm-empty {
+      text-align: center;
+      color: var(--text-faint);
+      font-size: 12px;
+      padding: 8px 0;
+    }
+
+    .cm-add-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 2px;
     }
   }
 }

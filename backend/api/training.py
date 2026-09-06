@@ -147,6 +147,10 @@ async def list_active_trainings():
     return items
 
 
+# 训练超参 → 实际传给 ultralytics 的字段映射（None 不传，沿用官方默认）
+_TRAIN_HYPER_KEYS = ("lr0", "optimizer", "patience", "seed", "mosaic", "mixup", "fliplr", "degrees")
+
+
 @router.post("/projects/{project_id}/train", response_model=dict)
 async def start_training(
     project_id: int,
@@ -234,6 +238,10 @@ async def start_training(
         batch_size=config.batch_size,
         status="pending",
     )
+    # 高级超参快照（仅记录非 None，训练线程按此透传）
+    run.hyperparams = {
+        k: getattr(config, k) for k in _TRAIN_HYPER_KEYS if getattr(config, k) is not None
+    }
     db.add(run)
     await db.commit()
     await db.refresh(run)
@@ -250,9 +258,11 @@ async def start_training(
     task_info["pretrain_source"] = config.pretrain_source
     training_tasks[run.id] = task_info
 
+    train_cfg = config.model_dump()
+    train_cfg["hyperparams"] = run.hyperparams or {}
     thread = threading.Thread(
         target=_run_real_training,
-        args=(run.id, project_id, config.model_dump(), weights_path, source_label),
+        args=(run.id, project_id, train_cfg, weights_path, source_label),
         daemon=True,
         name=f"train-run-{run.id}",
     )
@@ -349,6 +359,9 @@ def _run_real_training(run_id: int, project_id: int, config: dict,
         model.add_callback("on_train_epoch_end", on_epoch_end)
 
         log_line(f"开始训练: epochs={config['epochs']}, imgsz={config['img_size']}, batch={config['batch_size']}")
+        hp = {k: v for k, v in config.get("hyperparams", {}).items() if v is not None}
+        if hp:
+            log_line("高级超参: " + ", ".join(f"{k}={v}" for k, v in sorted(hp.items())))
 
         # 4. 心跳线程：把内存进度写入数据库
         stop_heartbeat = threading.Event()
@@ -366,7 +379,8 @@ def _run_real_training(run_id: int, project_id: int, config: dict,
         hb = threading.Thread(target=heartbeat, daemon=True)
         hb.start()
 
-        # 5. 执行训练
+        # 5. 执行训练（超参与工程类型相关校验已完成）
+        hp = {k: v for k, v in config.get("hyperparams", {}).items() if v is not None}
         results = model.train(
             data=str(yaml_path),
             epochs=config["epochs"],
@@ -379,6 +393,7 @@ def _run_real_training(run_id: int, project_id: int, config: dict,
             exist_ok=True,
             verbose=False,
             plots=True,
+            **hp,
         )
 
         # 6. 完成：读取权重与指标

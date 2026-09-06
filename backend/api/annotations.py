@@ -127,16 +127,18 @@ async def get_annotation_summary(
         raise HTTPException(status_code=404, detail="Project not found")
     
     # Get all images with their annotation counts
+    # 注意：一图多标注时 LEFT JOIN 会产生多行，统计图片数必须 DISTINCT，
+    #       否则「图多标注的 split」的 images 数会虚高、总和与图片总数对不上
     from sqlalchemy import func
     result = await db.execute(
-        select(Image.split, func.count(Image.id), func.count(Annotation.id))
+        select(Image.split, func.count(func.distinct(Image.id)), func.count(Annotation.id))
         .outerjoin(Annotation)
         .where(Image.project_id == project_id)
         .group_by(Image.split)
     )
     split_data = result.all()
     
-    # Get per-class counts
+    # Get per-class annotation counts
     class_result = await db.execute(
         select(Annotation.class_name, func.count(Annotation.id))
         .join(Image)
@@ -144,7 +146,16 @@ async def get_annotation_summary(
         .group_by(Annotation.class_name)
     )
     class_data = class_result.all()
-    
+
+    # Get per-class DISTINCT image counts（含该类别的图数，供界面与图总数对照）
+    img_ids = select(Image.id).where(Image.project_id == project_id)
+    class_img_result = await db.execute(
+        select(Annotation.class_name, func.count(func.distinct(Annotation.image_id)))
+        .where(Annotation.image_id.in_(img_ids))
+        .group_by(Annotation.class_name)
+    )
+    class_img_data = class_img_result.all()
+
     total_images = sum(row[1] or 0 for row in split_data)
     total_annotations = sum(row[2] or 0 for row in split_data)
     
@@ -154,6 +165,7 @@ async def get_annotation_summary(
         "total_annotations": total_annotations,
         "classes": project.classes or [],
         "class_counts": {row[0]: row[1] for row in class_data},
+        "class_image_counts": {row[0]: row[1] for row in class_img_data},
         "split_summary": {
             row[0]: {"images": row[1] or 0, "annotations": row[2] or 0}
             for row in split_data

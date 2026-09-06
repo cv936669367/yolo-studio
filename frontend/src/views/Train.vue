@@ -189,7 +189,73 @@
               </el-col>
             </el-row>
           </el-form>
-          
+
+          <!-- 高级超参（真实传入 ultralytics 训练） -->
+          <el-collapse v-model="advancedOpen" class="adv-collapse">
+            <el-collapse-item name="adv" title="高级超参 · 学习率 / 优化器 / 早停 / 数据增强 / 随机种子">
+              <el-form label-width="96px" size="small" class="adv-form">
+              <div class="adv-grid">
+                <el-form-item label="学习率 lr0">
+                  <el-input-number
+                    v-model="trainConfig.lr0"
+                    :min="0.0001" :max="0.5" :step="0.001" :precision="4"
+                    size="small" controls-position="right" class="adv-input"
+                  />
+                </el-form-item>
+                <el-form-item label="优化器">
+                  <el-select v-model="trainConfig.optimizer" size="small" class="adv-input">
+                    <el-option label="auto（自动选择）" value="auto" />
+                    <el-option label="SGD" value="SGD" />
+                    <el-option label="Adam" value="Adam" />
+                    <el-option label="AdamW（推荐迁移微调）" value="AdamW" />
+                    <el-option label="NAdam" value="NAdam" />
+                    <el-option label="RMSProp" value="RMSProp" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="早停 patience">
+                  <el-input-number
+                    v-model="trainConfig.patience"
+                    :min="0" :max="300" :step="5"
+                    size="small" controls-position="right" class="adv-input"
+                  />
+                  <span class="adv-unit">轮（0 = 关闭）</span>
+                </el-form-item>
+                <el-form-item label="随机种子 seed">
+                  <el-input-number
+                    v-model="trainConfig.seed"
+                    :min="0" :max="99999" :step="1"
+                    size="small" controls-position="right" class="adv-input"
+                  />
+                </el-form-item>
+                <el-form-item label="Mosaic 增强">
+                  <el-slider v-model="trainConfig.mosaic" :min="0" :max="1" :step="0.05" size="small" class="adv-slider" />
+                  <span class="adv-val mono">{{ trainConfig.mosaic.toFixed(2) }}</span>
+                </el-form-item>
+                <el-form-item label="MixUp 增强">
+                  <el-slider v-model="trainConfig.mixup" :min="0" :max="1" :step="0.05" size="small" class="adv-slider" />
+                  <span class="adv-val mono">{{ trainConfig.mixup.toFixed(2) }}</span>
+                </el-form-item>
+                <el-form-item label="水平翻转">
+                  <el-slider v-model="trainConfig.fliplr" :min="0" :max="1" :step="0.05" size="small" class="adv-slider" />
+                  <span class="adv-val mono">{{ trainConfig.fliplr.toFixed(2) }}</span>
+                </el-form-item>
+                <el-form-item label="旋转 degrees">
+                  <el-input-number
+                    v-model="trainConfig.degrees"
+                    :min="0" :max="180" :step="5"
+                    size="small" controls-position="right" class="adv-input"
+                  />
+                  <span class="adv-unit">°（0 = 关闭）</span>
+                </el-form-item>
+              </div>
+              </el-form>
+              <div class="adv-actions">
+                <el-button size="small" text type="primary" @click="resetHyperParams">恢复官方默认</el-button>
+                <span class="adv-note">全部真实作用于训练；小数据集（&lt;200 张）建议 mosaic=0 / mixup=0 更稳定</span>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+
           <el-alert
             v-if="!hasEnoughData"
             title="数据不足"
@@ -361,12 +427,30 @@ const currentRunId = ref(null)
 const pollTimer = ref(null)
 
 // Config
+const HYPER_DEFAULTS = {
+  lr0: 0.01,          // 与 ultralytics 默认一致
+  optimizer: 'auto',
+  patience: 100,
+  seed: 0,
+  mosaic: 1.0,
+  mixup: 0.0,
+  fliplr: 0.5,
+  degrees: 0,
+}
+
 const trainConfig = reactive({
   model_name: 'yolov8s',
   epochs: 100,
   img_size: 640,
   batch_size: 16,
+  ...HYPER_DEFAULTS,
 })
+const advancedOpen = ref([])
+
+const resetHyperParams = () => {
+  Object.assign(trainConfig, HYPER_DEFAULTS)
+  ElMessage.success('已恢复官方默认超参')
+}
 
 // Computed
 const hasEnoughData = computed(() => {
@@ -531,6 +615,15 @@ const startTraining = async () => {
       batch_size: trainConfig.batch_size,
       pretrain_source: pretrainSource.value,
       pretrain_run_id: pretrainSource.value === 'run' ? selectedTransferRun.value : null,
+      // 高级超参
+      lr0: trainConfig.lr0,
+      optimizer: trainConfig.optimizer,
+      patience: trainConfig.patience,
+      seed: trainConfig.seed,
+      mosaic: trainConfig.mosaic,
+      mixup: trainConfig.mixup,
+      fliplr: trainConfig.fliplr,
+      degrees: trainConfig.degrees,
     }
     
     const res = await trainApi.start(projectId.value, config)
@@ -783,6 +876,81 @@ onUnmounted(() => {
     margin-top: 10px;
     font-size: 12px;
     color: var(--text-3);
+  }
+
+  // ─── 高级超参 ─────────────────────────────
+  .adv-collapse {
+    margin-top: 4px;
+
+    :deep(.el-collapse-item__header) {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-2);
+      background: transparent;
+      border-bottom: 1px dashed var(--border-light);
+      height: 36px;
+      padding: 0 2px;
+    }
+
+    :deep(.el-collapse-item__wrap) {
+      background: transparent;
+      border-bottom: none;
+    }
+
+    :deep(.el-collapse-item__content) {
+      padding-bottom: 4px;
+    }
+  }
+
+  .adv-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 18px;
+
+    .el-form-item {
+      margin-bottom: 6px;
+
+      :deep(.el-form-item__label) {
+        font-size: 12px;
+        color: var(--text-3);
+        justify-content: flex-start;
+      }
+    }
+
+    .adv-input { width: 140px; }
+
+    .adv-slider {
+      flex: 1;
+      min-width: 60px;
+      margin-right: 8px;
+    }
+
+    .adv-val {
+      font-size: 11px;
+      color: var(--brand);
+      width: 30px;
+      text-align: right;
+    }
+
+    .adv-unit {
+      font-size: 10.5px;
+      color: var(--text-faint);
+      margin-left: 6px;
+      white-space: nowrap;
+    }
+  }
+
+  .adv-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+    padding-left: 4px;
+
+    .adv-note {
+      font-size: 11px;
+      color: var(--text-3);
+    }
   }
   
   .model-family {

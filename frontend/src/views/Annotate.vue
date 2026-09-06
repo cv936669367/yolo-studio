@@ -71,22 +71,30 @@
       </div>
     </div>
 
-    <!-- Film strip: 当前筛选后的图片缩略图 -->
-    <div class="film-strip" v-if="viewImages.length">
-      <div
-        v-for="(img, idx) in viewImages"
-        :key="img.id"
-        class="strip-item"
-        :class="{ active: idx === currentIndex }"
-        @click="currentIndex = idx"
-      >
-        <img :src="img.file_path" :alt="img.original_name" />
-        <!-- 数据集划分标记（右上角） -->
-        <span class="strip-split" :class="img.split">
-          {{ img.split === 'train' ? 'Tr' : (img.split === 'val' ? 'Va' : 'Te') }}
-        </span>
-        <!-- 标注数（右下角） -->
-        <span class="strip-badge mono">{{ img.annotation_count || 0 }}</span>
+    <!-- Film strip（横向虚拟滚动：只渲染视口附近缩略图，适配上千图） -->
+    <div
+      v-if="viewImages.length"
+      ref="stripRef"
+      class="film-strip"
+      @scroll.passive="onStripScroll"
+    >
+      <div class="strip-track" :style="{ width: viewImages.length * STRIP_STRIDE + 'px' }">
+        <div
+          v-for="it in visibleStripItems"
+          :key="it.img.id"
+          class="strip-item"
+          :class="{ active: it.idx === currentIndex }"
+          :style="{ left: it.idx * STRIP_STRIDE + 'px' }"
+          @click="currentIndex = it.idx"
+        >
+          <img :src="it.img.file_path" :alt="it.img.original_name" loading="lazy" />
+          <!-- 数据集划分标记（右上角） -->
+          <span class="strip-split" :class="it.img.split">
+            {{ it.img.split === 'train' ? 'Tr' : (it.img.split === 'val' ? 'Va' : 'Te') }}
+          </span>
+          <!-- 标注数（右下角） -->
+          <span class="strip-badge mono">{{ it.img.annotation_count || 0 }}</span>
+        </div>
       </div>
     </div>
 
@@ -305,14 +313,38 @@
           @mouseup="handleMouseUp"
           @mouseleave="handleMouseLeave"
         >
+          <!-- 整图：常驻显示层（CSS contain 自适应画布，行为与旧版一致，永远是布局与坐标基准） -->
           <img
             ref="imageRef"
             :src="getImageUrl(currentImage)"
+            @load="markPlainLoaded"
             @dblclick="handleDoubleClick"
             @contextmenu.prevent="handleRightClick($event)"
             draggable="false"
             class="annotation-image"
           />
+
+          <!-- 大图放大后的高清瓦片增强层：覆盖在整图上（原像素→显示盒等比缩放），
+               未加载区域透出底层整图，无闪烁/无坐标错位 -->
+          <div v-if="showTileLayer" class="tile-layer" @dblclick.stop="handleDoubleClick">
+            <div
+              class="tile-inner"
+              :style="{
+                width: tileNatW + 'px',
+                height: tileNatH + 'px',
+                transform: `scale(${tileScale})`,
+              }"
+            >
+              <img
+                v-for="t in visibleTiles"
+                :key="`${t.x}-${t.y}`"
+                class="tile-img"
+                :src="tileMeta.tile_prefix + t.x + '_' + t.y + '.jpg'"
+                :style="{ left: t.left + 'px', top: t.top + 'px', width: t.width + 'px', height: t.height + 'px' }"
+                draggable="false"
+              />
+            </div>
+          </div>
 
           <svg class="overlay-svg" v-if="imageLoaded">
             <!-- Existing annotations -->
@@ -689,6 +721,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { projectApi, imageApi, annotationApi, aiApi, trainApi } from '@/api'
+import { getClassColor as classColor } from '@/utils/classColors'
 
 const route = useRoute()
 const projectId = computed(() => parseInt(route.params.id))
@@ -819,6 +852,171 @@ const relocate = (targetId) => {
   currentIndex.value = viewImages.value.length ? 0 : -1
 }
 
+// ─── Film strip 横向虚拟滚动 ─────────────────────────────
+const STRIP_STRIDE = 70 // item 64px + 6px 间距（与 CSS 保持同步）
+const STRIP_BUFFER = 5
+const stripRef = ref(null)
+const stripScroll = ref(0)
+const stripViewW = ref(600)
+let stripResizeObs = null
+
+const onStripScroll = () => {
+  stripScroll.value = stripRef.value?.scrollLeft || 0
+}
+
+// 渲染窗口：完全跟随 scrollLeft（用户拖动滚动条/横向滑屏时逐段加载）。
+// 不要把窗口锚定回 currentIndex —— 否则手动向右浏览时会被强制拉回当前图，
+// 表现为「横向滚动不加载」。
+// 「当前项可见」由 ensureStripVisible 负责：任何 currentIndex 变化的入口
+// （点击缩略图/键盘/翻页/筛选跳转）都会程序滚动并把 scrollLeft 同步进 ref，
+// 渲染窗口随之包含当前项。
+const visibleStripItems = computed(() => {
+  const n = viewImages.value.length
+  if (!n) return []
+  const viewCount = Math.max(1, Math.ceil(stripViewW.value / STRIP_STRIDE))
+  const count = viewCount + STRIP_BUFFER * 2
+  const first = Math.max(0, Math.floor(stripScroll.value / STRIP_STRIDE) - STRIP_BUFFER)
+  const last = Math.min(n, first + count)
+  const out = []
+  for (let i = first; i < last; i++) out.push({ img: viewImages.value[i], idx: i })
+  return out
+})
+
+// 当前图滑出可视区时滚回；滚动后立即把 scrollLeft 同步进 ref，
+// 保证同一帧渲染窗口就包含当前项（scroll 事件是异步派发的，不能等它）
+const ensureStripVisible = (idx) => {
+  const el = stripRef.value
+  if (!el || idx < 0) return
+  const left = idx * STRIP_STRIDE
+  const right = left + STRIP_STRIDE
+  if (left < el.scrollLeft) {
+    el.scrollLeft = Math.max(0, left - 8)
+  } else if (right > el.scrollLeft + el.clientWidth) {
+    el.scrollLeft = Math.max(0, right - el.clientWidth + 8)
+  }
+  stripScroll.value = el.scrollLeft // 同步（scroll 事件随后也会再触发，幂等）
+}
+
+// 挂载缩略条宽度观测（film-strip 随图片异步加载后才出现，需兜底补挂）
+const ensureStripObserver = () => {
+  if (!stripRef.value) return
+  stripViewW.value = stripRef.value.clientWidth
+  if (!stripResizeObs) {
+    stripResizeObs = new ResizeObserver(() => {
+      stripViewW.value = stripRef.value?.clientWidth || stripViewW.value
+    })
+    stripResizeObs.observe(stripRef.value)
+  }
+}
+
+// ─── 超大图高清瓦片（增强叠加层，不替代整图显示）────────
+// 原则：
+//  1. 整图 <img> 常驻（CSS contain 自适应画布 → 任何图打开即完整可见，行为同旧版）
+//  2. 只有「足够大的图」且用户放大 zoom>1 时，才在整图之上叠加高清瓦片层；
+//     瓦片层按原像素等比缩放到 img 显示盒（transform scale），与 overlay 坐标完全一致，
+//     未加载区域透出底层整图 → 无黑屏、无闪烁、无坐标错位
+//  3. 中低分辨率图（如手机竖图）不触发瓦片，永远走整图
+const TILE_MIN_SIDE = 5500 // 长边 ≥5500px 才算超大图（与后端 TILE_THRESHOLD 一致）
+const tileMeta = ref(null)         // tile-info 清单（后台预取，不阻塞显示）
+const tileInfoCache = new Map()    // imageId → meta（避免重复请求）
+const visibleTiles = ref([])
+const tileScale = ref(0)           // 原像素 → 显示盒 等比缩放系数
+let canvasResizeObs = null
+
+// 瓦片层只在「超大图 + 清单就绪 + 放大 >100%」时叠加
+const showTileLayer = computed(() =>
+  tileMeta.value?.tiled === true && zoom.value > 1
+)
+const tileNatW = computed(() => tileMeta.value?.width || 0)
+const tileNatH = computed(() => tileMeta.value?.height || 0)
+
+// 整图 <img> 解码完成：记录显示盒尺寸（overlay 坐标基准）并解锁标注叠加层
+const markPlainLoaded = () => {
+  const img = imageRef.value
+  if (!img || !currentImage.value) return
+  imageWidth.value = img.clientWidth || currentImage.value.width || 0
+  imageHeight.value = img.clientHeight || currentImage.value.height || 0
+  imageLoaded.value = true
+}
+
+// 缓存命中等情况下 load 事件可能极快/已 complete → 手动补一次同步判定
+const syncPlainLoadedIfComplete = () => {
+  nextTick(() => {
+    const img = imageRef.value
+    if (img && img.complete && !imageLoaded.value && currentImage.value) {
+      markPlainLoaded()
+    }
+  })
+}
+
+// 计算当前视口内的瓦片集合（图素坐标，左上原点）并同步缩放系数
+const updateVisibleTiles = () => {
+  const meta = tileMeta.value
+  const img = imageRef.value
+  if (!meta || !meta.tiled || zoom.value <= 1 || !img || !canvasAreaRef.value) {
+    visibleTiles.value = []
+    return
+  }
+  // img（整图）始终是布局/坐标基准；getBoundingClientRect 已含 wrapper 的 zoom/pan 变换
+  const view = canvasAreaRef.value.getBoundingClientRect()
+  const layer = img.getBoundingClientRect()
+  if (!layer.width || !layer.height) {
+    visibleTiles.value = []
+    return
+  }
+  // 瓦片 inner 的缩放必须用「不含 zoom 的布局宽」(clientWidth)，
+  // 因为 inner 与整图同处 wrapper 内、还会被 wrapper 的 transform 再放大一次
+  tileScale.value = img.clientWidth / meta.width
+  const sx = meta.width / layer.width   // 屏幕→原图像素
+  const sy = meta.height / layer.height
+  const pad = 1
+  const x0 = Math.max(0, Math.floor(((view.left - layer.left) * sx - pad * meta.tile_size) / meta.tile_size))
+  const x1 = Math.min(meta.cols, Math.ceil(((view.right - layer.left) * sx + pad * meta.tile_size) / meta.tile_size))
+  const y0 = Math.max(0, Math.floor(((view.top - layer.top) * sy - pad * meta.tile_size) / meta.tile_size))
+  const y1 = Math.min(meta.rows, Math.ceil(((view.bottom - layer.top) * sy + pad * meta.tile_size) / meta.tile_size))
+  const out = []
+  for (let ty = y0; ty < y1; ty++) {
+    for (let tx = x0; tx < x1; tx++) {
+      out.push({
+        x: tx,
+        y: ty,
+        left: tx * meta.tile_size,
+        top: ty * meta.tile_size,
+        width: Math.min(meta.tile_size, meta.width - tx * meta.tile_size),
+        height: Math.min(meta.tile_size, meta.height - ty * meta.tile_size),
+      })
+    }
+  }
+  visibleTiles.value = out
+}
+
+// 后台预取瓦片清单（不改变显示）
+const fetchTileMeta = async () => {
+  const img = currentImage.value
+  if (!img) return
+  const big = (img.width && img.height && Math.max(img.width, img.height) >= TILE_MIN_SIDE)
+  if (!big) return
+  try {
+    let meta = tileInfoCache.get(img.id)
+    if (!meta) {
+      meta = await imageApi.tileInfo(img.id)
+      if (meta && meta.tiled) tileInfoCache.set(img.id, meta)
+    }
+    if (!meta || meta.tiled !== true) return
+    tileMeta.value = meta
+    if (showTileLayer.value) updateVisibleTiles()
+  } catch (e) {
+    // 瓦片不可用则保持整图直显
+  }
+}
+
+// 切换图片时重置瓦片状态并后台预取
+const resetTileForImage = () => {
+  tileMeta.value = null
+  visibleTiles.value = []
+  tileScale.value = 0
+}
+
 // Tool state
 const currentTool = ref('rectangle')
 const selectedClass = ref('')
@@ -831,6 +1029,18 @@ const panning = ref(false)
 const panStart = ref(null) // {cx, cy, px, py}
 const imageWidth = ref(640)
 const imageHeight = ref(480)
+
+// 平移/缩放时重算可见瓦片（仅瓦片层激活时渲染；否则清空）
+// 注意：watcher 默认在 DOM 提交前执行，此时 transform 还是旧值；
+// 需 nextTick 等新 scale 应用后再按最新矩形计算可见块
+watch([zoom, canvasPan], async () => {
+  if (!showTileLayer.value) {
+    visibleTiles.value = []
+    return
+  }
+  await nextTick()
+  updateVisibleTiles()
+})
 
 // Selection & editing
 const selectedId = ref(null)
@@ -963,27 +1173,14 @@ const canUndo = computed(() => historyStack.value.length > 0)
 const canRedo = computed(() => redoStack.value.length > 0)
 
 // ─── Colors ──────────────────────────────────────────────
-const CLASS_COLORS = ['#1f5aff', '#0f9d58', '#e6a23c', '#e5484d', '#7c3aed', '#0ea5e9', '#db2777', '#65a30d']
-
-const getClassColor = (className) => {
-  const classes = project.value.classes || []
-  const idx = classes.indexOf(className)
-  return CLASS_COLORS[idx >= 0 ? idx % CLASS_COLORS.length : hashCode(className) % CLASS_COLORS.length]
-}
+// 统一取色：工程自定义 class_colors 优先 → classes 顺序调色板 → 名称哈希兜底
+const getClassColor = (className) =>
+  classColor(className, project.value.class_colors || {}, project.value.classes || [])
 
 const classColorFill = (className) => {
   const c = getClassColor(className)
   // 半透明填充（Roboflow 风格）
   return `${c}26` // 15% alpha
-}
-
-const hashCode = (str) => {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i)
-    hash |= 0
-  }
-  return Math.abs(hash)
 }
 
 const labelWidth = (name) => name.length * 7 + 8
@@ -1060,13 +1257,23 @@ const prevImage = () => { if (currentIndex.value > 0) currentIndex.value-- }
 const nextImage = () => { if (currentIndex.value < viewImages.value.length - 1) currentIndex.value++ }
 
 const fitZoom = () => {
-  const img = imageRef.value
-  if (!img) return
   const area = canvasAreaRef.value
   if (!area) return
+  let W = 0
+  let H = 0
+  if (tileMeta.value?.tiled) {
+    W = tileMeta.value.width
+    H = tileMeta.value.height
+  } else {
+    const img = imageRef.value
+    if (!img) return
+    W = img.naturalWidth || 0
+    H = img.naturalHeight || 0
+  }
+  if (!W || !H) return
   const availW = area.clientWidth - 40
   const availH = area.clientHeight - 40
-  zoom.value = Math.min(1, Math.min(availW / img.naturalWidth, availH / img.naturalHeight))
+  zoom.value = Math.min(1, Math.min(availW / W, availH / H))
 }
 
 // ─── Undo/Redo ───────────────────────────────────────────
@@ -1823,22 +2030,23 @@ watch(currentImage, async () => {
   cancelSmart()
   canvasPan.value = { x: 0, y: 0 }
   imageLoaded.value = false
+  tileMeta.value = null
+  visibleTiles.value = []
 
   if (currentImage.value) {
     await loadAnnotations()
+    resetTileForImage()          // 清空上一张的瓦片状态
+    fetchTileMeta()              // 后台预取（不阻塞整图显示）
     await nextTick()
-    const img = imageRef.value
-    if (img) {
-      const onLoad = () => {
-        imageWidth.value = img.clientWidth
-        imageHeight.value = img.clientHeight
-        imageLoaded.value = true
-      }
-      if (img.complete) onLoad()
-      else img.onload = onLoad
-    }
+    syncPlainLoadedIfComplete()  // 缓存图同步补一次加载判定
+    ensureStripVisible(currentIndex.value)
   }
 }, { immediate: true })
+
+// 通过键盘/翻页切换图片时保持当前项在缩略条可视范围
+watch(currentIndex, (idx) => {
+  if (viewImages.value.length) ensureStripVisible(idx)
+})
 
 // ─── Keyboard shortcuts ──────────────────────────────────
 const handleKeydown = (e) => {
@@ -1894,12 +2102,30 @@ onMounted(() => {
   checkSamStatus()
   loadAutoLabelModels()
   window.addEventListener('keydown', handleKeydown)
+
+  // 视口尺寸观测：缩略条宽度 / 画布尺寸（瓦片视口变化）
+  const observeResize = () => {
+    ensureStripObserver() // film-strip 此时可能尚未渲染（图片异步加载），加载后由下方 watch 兜底补挂
+    if (canvasAreaRef.value) {
+      canvasResizeObs = new ResizeObserver(() => {
+        if (showTileLayer.value) updateVisibleTiles()
+      })
+      canvasResizeObs.observe(canvasAreaRef.value)
+    }
+  }
+  nextTick(observeResize)
+  // film-strip 随图片列表出现 → 出现后再补挂宽度观测
+  watch(() => viewImages.value.length, () => {
+    nextTick(ensureStripObserver)
+  })
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   stopSamPolling()
   stopAutoLabelPoll()
+  stripResizeObs?.disconnect()
+  canvasResizeObs?.disconnect()
 })
 </script>
 
@@ -2313,7 +2539,7 @@ onUnmounted(() => {
 
       .annotation-image {
         max-width: 100%;
-        max-height: calc(100vh - 240px);
+        max-height: calc(100vh - 250px); // 略小于画布可用高度，保证整图完整可见（不裁边）
         object-fit: contain;
         display: block;
         user-select: none;
@@ -2741,5 +2967,69 @@ onUnmounted(() => {
     border-radius: 4px;
     padding: 6px 8px;
   }
+}
+
+// ─── Film strip 虚拟滚动（绝对定位轨道；同特异性下后声明覆盖原 flex 布局）───
+.annotate-page .film-strip {
+  .strip-track {
+    position: relative;
+    height: 48px;
+    flex: 0 0 auto;
+  }
+
+  .strip-item {
+    position: absolute;
+    top: 0;
+    left: 0;
+    margin: 0;
+    flex: none;
+  }
+}
+
+// ─── 超大图瓦片增强层（叠加在整图之上，不拦截交互）──────
+.tile-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none; // 所有鼠标事件透传给 wrapper/整图（标注交互不受影响）
+
+  .tile-inner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+
+  .tile-img {
+    position: absolute;
+    display: block;
+  }
+
+  .tile-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: #aeb4c0;
+    font-size: 12px;
+    background: rgba(18, 20, 26, 0.35);
+    z-index: 3;
+  }
+}
+
+.tile-wait {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 260px;
+  padding: 22px 20px;
+  color: #aeb4c0;
+  font-size: 13px;
+  background: #1b1f28;
+  border: 1px solid #2a2f3a;
+  border-radius: 6px;
 }
 </style>

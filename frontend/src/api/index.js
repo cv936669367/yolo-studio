@@ -26,6 +26,10 @@ export const projectApi = {
   create: (data) => api.post('/projects', data),
   update: (id, data) => api.put(`/projects/${id}`, data),
   delete: (id) => api.delete(`/projects/${id}`),
+  // 类别管理
+  renameClass: (id, data) => api.post(`/projects/${id}/classes/rename`, data),
+  setClassColor: (id, data) => api.put(`/projects/${id}/classes/color`, data),
+  deleteClass: (id, name) => api.delete(`/projects/${id}/classes/${encodeURIComponent(name)}`),
 }
 
 // ─── Image API ────────────────────────────────────────────
@@ -43,6 +47,8 @@ export const imageApi = {
   batchDelete: (imageIds) => api.post('/images/batch-delete', { image_ids: imageIds }),
   updateSplit: (imageIds, split) => api.put('/images/split', { image_ids: imageIds, split }),
   autoSplit: (projectId) => api.post(`/projects/${projectId}/auto-split`),
+  // 大图瓦片清单（懒生成）
+  tileInfo: (imageId) => api.get(`/images/${imageId}/tile-info`),
 }
 
 // ─── Annotation API ───────────────────────────────────────

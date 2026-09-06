@@ -24,6 +24,10 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      '/tiles': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
     },
   },
 })
