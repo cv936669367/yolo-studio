@@ -42,7 +42,7 @@ start_backend() {
   # 等待就绪
   for i in $(seq 1 30); do
     sleep 1
-    if curl -sf http://127.0.0.1:$BACKEND_PORT/health >/dev/null 2>&1; then
+    if curl -sf http://localhost:$BACKEND_PORT/health >/dev/null 2>&1; then
       ok "后端就绪 → http://localhost:$BACKEND_PORT  (接口文档 /docs)"
       return 0
     fi
@@ -68,7 +68,7 @@ start_frontend() {
     echo $! > "$LOG_DIR/frontend.pid" )
   for i in $(seq 1 30); do
     sleep 1
-    if curl -sf -o /dev/null http://127.0.0.1:$FRONTEND_PORT/ 2>/dev/null; then
+    if curl -sf -o /dev/null http://localhost:$FRONTEND_PORT/ 2>/dev/null; then
       ok "前端就绪 → http://localhost:$FRONTEND_PORT"
       return 0
     fi
