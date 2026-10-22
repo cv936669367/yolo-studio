@@ -1,7 +1,0 @@
-{
-  "python.defaultInterpreterPath": "/Users/linzhiyuan/Documents/AI/yolo_builder/backend/venv/bin/python",
-  "python.terminal.activateEnvironment": true,
-  "terminal.integrated.env.osx": {
-    "PATH": "/Users/linzhiyuan/Documents/AI/yolo_builder/backend/venv/bin:${env:PATH}"
-  }
-}

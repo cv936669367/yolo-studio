@@ -22,8 +22,9 @@ __pycache__/
 .env.*
 !.env.example
 
-# 日志
+# 日志（运行时生成，勿提交）
 *.log
+logs/
 
 # ─── 运行时数据（勿上传：数据库 + 上传图片 + 模型权重 + 训练产物）───
 backend/data/
@@ -55,9 +56,7 @@ pnpm-debug.log*
 # ─── IDE / 编辑器 ────────────────────────────────────────
 .idea/
 *.iml
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
+.vscode/
 
 # ─── 临时文件 ────────────────────────────────────────────
 tmp/
