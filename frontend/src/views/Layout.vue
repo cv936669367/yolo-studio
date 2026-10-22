@@ -92,14 +92,14 @@
           </div>
         </div>
 
-        <!-- 底部组织标识：新疆软件园 -->
+        <!-- 底部组织标识：星途幻想 -->
         <div class="sidebar-footer" :class="{ collapsed: sidebarCollapsed }">
-          <el-tooltip content="新疆软件园" placement="right" :disabled="!sidebarCollapsed">
+          <el-tooltip content="新疆星途幻想网络科技有限公司（星途幻想）" placement="right" :disabled="!sidebarCollapsed">
             <div class="org-badge">
-              <span class="org-mark">疆</span>
+              <span class="org-mark">星</span>
               <span class="org-text" v-show="!sidebarCollapsed">
-                <span class="org-name">新疆软件园</span>
-                <span class="org-sub">XINJIANG SOFTWARE PARK</span>
+                <span class="org-name">星途幻想</span>
+                <span class="org-sub">XINGTU FANTASY</span>
               </span>
             </div>
           </el-tooltip>

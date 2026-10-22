@@ -169,6 +169,12 @@ yolo_builder/
 
 ***
 
+## 🏢 关于
+
+YOLO Studio 由 **新疆星途幻想网络科技有限公司（星途幻想）** 开发并开源。
+
+***
+
 ## 📄 License
 
 [MIT](LICENSE)
