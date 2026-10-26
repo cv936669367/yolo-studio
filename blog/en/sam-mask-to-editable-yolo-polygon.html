@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SAM returns a mask. YOLO wants a polygon. Here's the pixel math in between. · YOLO Studio</title>
+<meta name="description" content="How we turn Segment Anything prompts into editable, normalized YOLO segmentation labels — including the shape bug that silently only uses your first click.">
+<link rel="canonical" href="https://cv936669367.github.io/yolo-studio/blog/en/sam-mask-to-editable-yolo-polygon.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="SAM returns a mask. YOLO wants a polygon. Here's the pixel math in between.">
+<meta property="og:description" content="How we turn Segment Anything prompts into editable, normalized YOLO segmentation labels — including the shape bug that silently only uses your first click.">
+<meta property="og:url" content="https://cv936669367.github.io/yolo-studio/blog/en/sam-mask-to-editable-yolo-polygon.html">
+<meta property="og:site_name" content="YOLO Studio">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../index.html">YOLO Studio · Notes</a>
+  <nav class="nav">
+    <a href="https://github.com/cv936669367/yolo-studio">GitHub</a>
+    <a href="https://gitee.com/btdba/yolo-studio">Gitee</a>
+    <a href="../index.html">全部文章</a>
+  </nav>
+</div></header>
+<main class="wrap">
+<article class="post">
+<header>
+<h1>SAM returns a mask. YOLO wants a polygon. Here's the pixel math in between.</h1>
+<div class="meta"><span>2026-10-26</span><span>5 min read</span><span class="tag">computervision</span><span class="tag">python</span><span class="tag">machinelearning</span><span class="tag">opensource</span></div>
+</header>
+<p>Segment Anything is very good at answering one question: <em>given this prompt, which pixels belong to the object?</em> YOLO is very good at answering a different one: <em>given this image, where are all the objects of these classes?</em> Putting them in the same tool means crossing a format gap that looks trivial and isn't.</p>
+<p>This is a walkthrough of that gap as it's implemented in <a href="https://github.com/cv936669367/yolo-studio">YOLO Studio</a>, an MIT-licensed local labeling + training workbench. The whole conversion is about 120 lines of Python in <code>backend/api/ai_annotate.py</code>, and most of the interesting decisions are in the details.</p>
+<h2>The three coordinate systems</h2>
+<p>A single click passes through three representations before it becomes a label:</p>
+<ol>
+<li><strong>Browser pixels.</strong> The canvas is scaled, panned and sometimes tiled, so the raw mouse position means nothing on its own.</li>
+<li><strong>Normalized image coordinates,</strong> <code>0..1</code> relative to the original image. Everything stored in the annotation table uses this, which is why annotations survive window resizing, zooming and different viewport sizes.</li>
+<li><strong>Original-image pixels.</strong> SAM wants integers in the source image's coordinate space, and Ultralytics' <code>predict</code> call takes them that way.</li>
+</ol>
+<p>So the front end normalizes before sending, and the backend multiplies back up:</p>
+<pre><code class="language-python">box_xyxy = [
+    int(x * img_w), int(y * img_h),
+    int((x + w) * img_w), int((y + h) * img_h),
+]
+</code></pre>
+<p>Storing normalized points rather than pixels has a second benefit: the training exporter doesn't need to know the original resolution. YOLO segmentation labels are normalized anyway.</p>
+<h2>The shape bug that eats your clicks</h2>
+<p>SAM's point prompts take two tensors: <code>points</code> and <code>labels</code>. The shape is <code>(batch, n_points, 2)</code> and <code>(batch, n_points)</code>.</p>
+<p>The natural-looking version is wrong:</p>
+<pre><code class="language-python"># Wrong: interpreted as N images, each with one point
+points = [[x1, y1], [x2, y2]]
+</code></pre>
+<p>Ultralytics reads a <code>(N, 2)</code> array as <em>N separate images with one prompt each</em>, so only the first click actually lands on your image. The working shape adds a batch dimension:</p>
+<pre><code class="language-python">sam_points = [[[int(p[&quot;x&quot;] * img_w), int(p[&quot;y&quot;] * img_h)] for p in pts]]
+sam_labels = [[1 if p.get(&quot;positive&quot;, True) else 0 for p in pts]]
+
+results = model.predict(
+    str(img_path),
+    points=sam_points,   # (1, N, 2)
+    labels=sam_labels,   # (1, N): 1 = include, 0 = exclude
+    verbose=False,
+)
+</code></pre>
+<p>We left a comment above that line because the failure mode is silent: no exception, no warning, just a mask that ignores everything after the first point.</p>
+<h2>Picking one mask out of several</h2>
+<p>A box prompt usually comes back with more than one candidate mask. We score them by polygon area and keep the largest:</p>
+<pre><code class="language-python">best_idx, best_area = 0, 0
+for i, xy in enumerate(masks.xy):
+    if len(xy) &gt;= 3:
+        area = abs(sum(
+            xy[j][0] * xy[(j + 1) % len(xy)][1] - xy[(j + 1) % len(xy)][0] * xy[j][1]
+            for j in range(len(xy))
+        ) / 2)
+        if area &gt; best_area:
+            best_area, best_idx = area, i
+</code></pre>
+<p>The shoelace formula runs on the returned contour in pixel space, so no extra mask decoding is needed. Largest-area is a heuristic with a clear failure case: if your box covers two objects, you get the bigger one and silently lose the other. A multi-mask picker in the UI (small/medium/large candidates, like the SAM demo) is the right fix; we haven't built it.</p>
+<h2>Mask → normalized polygon → simplify</h2>
+<p><code>masks.xy</code> gives one contour per instance as a list of pixel points. Those get normalized, then simplified, because raw SAM contours can be hundreds or thousands of vertices — unusable in a hand-editable polygon and wasteful in a label file:</p>
+<pre><code class="language-python">points_norm = [{&quot;x&quot;: round(p[0] / img_w, 6), &quot;y&quot;: round(p[1] / img_h, 6)} for p in poly_px]
+
+def _simplify_polygon(points, min_dist=0.006, max_points=120):
+    simplified = [points[0]]
+    for p in points[1:]:
+        last = simplified[-1]
+        if (p[0] - last[0])**2 + (p[1] - last[1])**2 &gt;= min_dist**2:
+            simplified.append(p)
+    ...
+    if len(simplified) &gt; max_points:
+        step = len(simplified) / max_points
+        simplified = [simplified[int(i * step)] for i in range(max_points)]
+    return simplified
+</code></pre>
+<p>Two parameters, both normalized so they behave the same on a 640 px and a 6000 px image:</p>
+<ul>
+<li><code>min_dist = 0.006</code> drops points closer than about 6 px per 1000 px of image width. Small enough to keep the shape of a bottle shoulder, big enough to collapse a straight edge into a couple of vertices.</li>
+<li><code>max_points = 120</code> is a hard cap, enforced by uniform subsampling. The cap exists because the annotation editor redraws handles on every mouse move, and because a 4000-point label is not something a human can meaningfully correct.</li>
+</ul>
+<p>The honest trade-off: this is a distance filter plus a stride, not Ramer–Douglas–Peucker. It preserves vertices uniformly rather than by geometric importance, so a sharp corner between two close points can be dropped while a straight run keeps more points than it needs. RDP with a small epsilon would give better shape fidelity at the same point count; it's on the list.</p>
+<h2>Preview mode: the difference between a guess and a tool</h2>
+<p>A point-prompt flow is iterative — click, look, click again, remove a point, look again. Writing every intermediate result to the database would be silly, and would also make "undo" ambiguous.</p>
+<p>So the endpoint has a <code>preview</code> flag:</p>
+<pre><code class="language-python">if data.preview:
+    return {&quot;success&quot;: True, &quot;points&quot;: points, &quot;points_count&quot;: len(points)}
+</code></pre>
+<p>The front end accumulates positive and negative points, re-requests a preview on each change, draws the returned polygon as an overlay, and only on confirm does it create the annotation. Same code path, no database churn, and the user's mental model matches the implementation: <em>you are editing a shape, not saving a series of mistakes.</em></p>
+<h2>From annotation to a training label</h2>
+<p>Polygon annotations are stored as a normalized point list. When a training run starts, the exporter writes YOLO segmentation format — one line per instance:</p>
+<pre><code>0 0.5123 0.2210 0.5231 0.2234 0.5290 0.2391 ...
+</code></pre>
+<p>Rectangles are a special case: in a polygon project, a rectangle annotation becomes a four-corner polygon, because a segmentation model can't consume box labels. Detection projects go the other way — polygon annotations are reduced to their bounding box. That asymmetry is the kind of thing that's obvious in hindsight and confusing when it bites you at export time.</p>
+<h2>Where it breaks</h2>
+<ul>
+<li><strong>Thin structures.</strong> Wires, cables, thin seams. The distance filter plus a 120-point cap will cut a cable into a few straight segments. Manual polygon editing is genuinely better here.</li>
+<li><strong>Transparent and reflective objects.</strong> The bottle in our screenshots is the hard case, not the easy one: the mask tends to leak into what's visible <em>through</em> the object. Negative points help; nothing fully solves it.</li>
+<li><strong>Objects touching the frame edge.</strong> SAM will happily segment past the border; the normalized points are still clipped to <code>0..1</code> at write time, so the polygon follows the edge.</li>
+<li><strong>Very small objects.</strong> If the mask yields fewer than three points after simplification, the call returns "segmentation too small" rather than writing a degenerate label. At that size, a box is the more honest annotation.</li>
+<li><strong>Model download.</strong> SAM-B is ~375 MB. The app fetches it from a mirror with an official-source fallback, and refuses to pretend the feature works before the download finishes.</li>
+</ul>
+<h2>What this buys you</h2>
+<p>The point of all this plumbing is one behaviour: when SAM gets the outline right — which for clean, well-framed industrial objects is most of the time — labeling a bottle becomes one drag plus one click, and the result is an <em>editable</em> polygon rather than a raster mask. The human stays in charge of the class, the boundary conventions, and the cases the model gets wrong, which is exactly where human time should go.</p>
+<p>Code: <a href="https://github.com/cv936669367/yolo-studio">github.com/cv936669367/yolo-studio</a> (<code>backend/api/ai_annotate.py</code>). MIT licensed. If you want to swap the simplifier for RDP, that's a small, well-scoped first PR.</p>
+</article>
+</main>
+<footer class="site"><div class="wrap">
+  <span>YOLO Studio · MIT · 新疆星途幻想网络科技有限公司</span>
+  <span><a href="https://github.com/cv936669367/yolo-studio">https://github.com/cv936669367/yolo-studio</a></span>
+</div></footer>
+</body>
+</html>
