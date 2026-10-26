@@ -34,7 +34,7 @@
 <p>项目地址：https://github.com/cv936669367/yolo-studio （MIT，另有 Gitee 镜像 https://gitee.com/btdba/yolo-studio）</p>
 </blockquote>
 <h2>一、起因：图片不能出内网</h2>
-<p>很多团队的视觉需求长这样：识别自己产线上的某种零件、某批包装、某个工位上的异常。图片往往带着客户信息、工艺细节，或者合同里就写着"不得上传第三方平台"。</p>
+<p>很多团队的视觉需求长这样：识别自己产线上的某种零件、某批包装、某个工位上的异常。图片往往带着客户信息、工艺细节，或者合同里就写着“不得上传第三方平台”。</p>
 <p>Roboflow 把这条流程设计得很好：建项目、传图、辅助标注、划分数据、训练、评估，一路点下来就能得到一个能用的模型。问题只有一个——它默认图片要离开你的机器。</p>
 <p>换成完全本地的方案，通常是这样拼起来的：CVAT 标图，Jupyter Notebook 训练，再用一个 Excel 记住哪个 <code>best.pt</code> 是哪次跑出来的、对应哪版数据。能跑通，但每换一批图片就要重新拼一次管线；换个人接手，先要花半天搞清楚目录结构。</p>
 <p>YOLO Studio 想做的事很朴素：<strong>把这条流水线收回一台机器，浏览器打开就能用。</strong> 技术栈也不复杂——后端 FastAPI + SQLAlchemy(async) + SQLite，前端 Vue 3 + Element Plus + Vite，训练真实调用 Ultralytics，SAM 走 Ultralytics 的封装，MIT 协议。</p>
@@ -43,7 +43,7 @@
 <p>下面是我们在这件事上做的几个取舍，按重要性排。</p>
 <h2>二、取舍一：SQLite 单机，而不是做一个服务</h2>
 <p>最容易被质疑的决定：为什么不做成 Web 服务、多人协作、对象存储？</p>
-<p>因为目标场景就是"一台机器、一个人、一个项目"。选定这个前提之后，很多复杂度是自找的：</p>
+<p>因为目标场景就是“一台机器、一个人、一个项目”。选定这个前提之后，很多复杂度是自找的：</p>
 <ul>
 <li>数据用 SQLite，不用 Postgres，不需要部署数据库；</li>
 <li>图片、权重、训练产物直接落在 <code>backend/data/</code>，备份就是拷目录；</li>
@@ -53,10 +53,10 @@
 <p>好处是数据完全可见：每一张图、每一条标注、每一次训练记录，都能用任意 SQLite 工具打开看。坏处也很直接——没有并发、没有多用户、没有权限体系。它是个工作台，不是平台。</p>
 <h2>三、取舍二：让 SAM 只负责几何，不负责语义</h2>
 <p>这是整个项目里最关键的一条设计。</p>
-<p>SAM（Segment Anything）很强，但它强在"你指的这一块，边界在哪"，而不是"这是什么"。所以接口从头到尾都按"几何工具"来设计：</p>
+<p>SAM（Segment Anything）很强，但它强在“你指的这一块，边界在哪”，而不是“这是什么”。所以接口从头到尾都按“几何工具”来设计：</p>
 <p><strong>人给位置提示 → SAM 返回掩码 → 转成归一化多边形 → 人确认类别和边界。</strong></p>
 <p>框选模式用一个矩形告诉 SAM 大概范围；点选模式用左键加正点、右键加负点，逐步把背景排掉。两种模式最终产出的都是<strong>可编辑的多边形点集</strong>，不是一张栅格掩码——因为标注的价值在于后续能改、能进训练，而不是好看。</p>
-<p>这里有个实现细节值得单独说，因为它踩过一次：SAM 的点提示，<code>points</code> 和 <code>labels</code> 的形状是 <code>(batch, n_points, 2)</code> 和 <code>(batch, n_points)</code>。如果按直觉写成 <code>(N, 2)</code>，Ultralytics 会理解成"N 张图，每张一个点"，结果只有第一个点生效，而且<strong>不报错</strong>——你只会看到轮廓莫名其妙不对。</p>
+<p>这里有个实现细节值得单独说，因为它踩过一次：SAM 的点提示，<code>points</code> 和 <code>labels</code> 的形状是 <code>(batch, n_points, 2)</code> 和 <code>(batch, n_points)</code>。如果按直觉写成 <code>(N, 2)</code>，Ultralytics 会理解成“N 张图，每张一个点”，结果只有第一个点生效，而且<strong>不报错</strong>——你只会看到轮廓莫名其妙不对。</p>
 <p>正确的写法是加一层 batch 维度：</p>
 <pre><code class="language-python">sam_points = [[[int(p[&quot;x&quot;] * img_w), int(p[&quot;y&quot;] * img_h)] for p in pts]]
 sam_labels = [[1 if p.get(&quot;positive&quot;, True) else 0 for p in pts]]
@@ -72,13 +72,13 @@ model.predict(str(img_path), points=sam_points, labels=sam_labels)
 <li><strong>基线模型</strong>：下载任务匹配的 YOLOv8 预训练权重，按工程类别做名称匹配，生成检测框或分割轮廓；</li>
 <li><strong>工程模型</strong>：用本工程已经训练完成的 <code>best.pt</code>，对后续图片批量推理，检测工程出框、分割工程出轮廓。</li>
 </ul>
-<p>第一条有个必须说清楚的坑：<strong>基线模型只认识它训练过的类别，匹配方式是类名字面比较。</strong> 你的工程里如果叫 <code>drinks</code>，COCO 的 <code>bottle</code> 不会自动对应过去。想识别自己的业务类别，绕不开"先标一批、再训练"这一步。</p>
-<p>而这也正是第二条的价值：第一轮之后，模型认识的是<strong>你的</strong>类别，预标注才真的开始省时间。人的工作从"画轮廓"逐渐变成"改错、补漏"——这是唯一能在真实脏数据上站得住的提速。</p>
+<p>第一条有个必须说清楚的坑：<strong>基线模型只认识它训练过的类别，匹配方式是类名字面比较。</strong> 你的工程里如果叫 <code>drinks</code>，COCO 的 <code>bottle</code> 不会自动对应过去。想识别自己的业务类别，绕不开“先标一批、再训练”这一步。</p>
+<p>而这也正是第二条的价值：第一轮之后，模型认识的是<strong>你的</strong>类别，预标注才真的开始省时间。人的工作从“画轮廓”逐渐变成“改错、补漏”——这是唯一能在真实脏数据上站得住的提速。</p>
 <p>批量预标注支持选范围、调置信度、中途取消，已完成的标注会保留。分割工程要额外注意：轮廓不可用时会回退成四角多边形，这些回退结果必须人工看一眼，否则会悄悄污染下一轮训练集。</p>
-<h2>五、取舍四：中文优先，和"国内能下载"</h2>
+<h2>五、取舍四：中文优先，和“国内能下载”</h2>
 <p>界面是中文的，Element Plus 也锁定 <code>zh-cn</code>，没有 i18n 层——字符串直接写在 Vue 组件里。对海外用户这是明确的门槛，我们认。</p>
 <p>另一件更实际的事是权重下载。<code>github.com</code> 的 release 资源在国内经常下不动，而 SAM-B 有 375MB，下不下来直接决定智能标注能不能用。所以下载逻辑是：先试几个公共 GitHub 加速地址（<code>gh-proxy.com</code>、<code>ghfast.top</code>、<code>ghproxy.net</code>），失败回退官方源，全程有进度条。</p>
-<p>需要说明的是：<strong>这不是"我们自建了国内镜像"</strong>，只是把公共加速服务做成默认顺序，并保留官方源兜底。</p>
+<p>需要说明的是：<strong>这不是“我们自建了国内镜像”</strong>，只是把公共加速服务做成默认顺序，并保留官方源兜底。</p>
 <h2>六、取舍五：训练设备只做 MPS / CPU</h2>
 <p>代码里就一行：</p>
 <pre><code class="language-python">device = &quot;mps&quot; if torch.backends.mps.is_available() else &quot;cpu&quot;
@@ -92,7 +92,7 @@ model.predict(str(img_path), points=sam_points, labels=sam_labels)
 <li><strong>依赖锁定 <code>ultralytics==8.3.0</code></strong>，模型列表里有更新的系列，但权重能否加载取决于实际安装的 Ultralytics 版本，建议从 YOLOv8 开始；</li>
 <li><strong>单用户、无鉴权</strong>，不要暴露到不受控的网络；</li>
 <li><strong>验证页的指标卡读取的是框指标</strong>，分割工程还要另外看掩码指标和轮廓质量；</li>
-<li><strong>验证集为空时会借一张训练图</strong>（Ultralytics 要求 val 非空），所以要自己准备独立、标注完整的验证集，别把"能开始训练"当成"评估条件可靠"；</li>
+<li><strong>验证集为空时会借一张训练图</strong>（Ultralytics 要求 val 非空），所以要自己准备独立、标注完整的验证集，别把“能开始训练”当成“评估条件可靠”；</li>
 <li><strong>预标注按类名精确匹配</strong>，自定义类别必须先训练；</li>
 <li><strong>轮廓抽稀不是 RDP</strong>，细长结构、透明反光物体的边界仍建议手工修。</li>
 </ol>
@@ -107,7 +107,7 @@ uvicorn main:app --reload --port 8000
 cd ../frontend &amp;&amp; npm install &amp;&amp; npm run dev
 </code></pre>
 <p>浏览器打开 <code>http://localhost:3000</code>，第一次会创建 <code>backend/data/</code>。想用 SAM 智能标注，先在标注页下载 sam_b.pt（约 375MB）。</p>
-<p>如果你在真实项目里试了，欢迎把"卡在哪一步"发到 issue——尤其是操作系统、Python 版本和报错。上面那份"做不到"的清单，就是靠这种方式一点点变短的。</p>
+<p>如果你在真实项目里试了，欢迎把“卡在哪一步”发到 issue——尤其是操作系统、Python 版本和报错。上面那份“做不到”的清单，就是靠这种方式一点点变短的。</p>
 </article>
 </main>
 <footer class="site"><div class="wrap">
