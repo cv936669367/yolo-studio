@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YOLO Studio · Notes</title>
+<meta name="description" content="YOLO Studio 的工程笔记：本地优先的 YOLO 标注、训练与导出工作台。">
+<link rel="canonical" href="https://cv936669367.github.io/yolo-studio/blog/index.html">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="index.html">YOLO Studio · Notes</a>
+  <nav class="nav"><a href="https://github.com/cv936669367/yolo-studio">GitHub</a><a href="https://gitee.com/btdba/yolo-studio">Gitee</a></nav>
+</div></header>
+<main class="wrap">
+<div class="hero">
+  <h1>本地优先的 YOLO 工作台：工程笔记</h1>
+  <p class="lead">标注、训练、预标注、导出的取舍记录。项目是 MIT 开源的本地工作台：图片不出机器，训练真实调用 Ultralytics，SAM 只负责几何。<br><span style="color:#66788a;font-size:15px">Notes from building a local-first YOLO workbench.</span></p>
+  <div class="langs"><a href="#en">English</a><a href="#zh">中文</a></div>
+</div>
+<h2 id="en" style="margin-top:44px;font-size:15px;letter-spacing:1px;color:#66788a;text-transform:uppercase">English</h2>
+<ul class="list"><li>
+  <div class="date">2026-10-26 · 6 min read</div>
+  <h2><a href="en/why-we-built-a-local-first-roboflow-alternative.html">We open-sourced a local-first Roboflow alternative for teams that can't upload their images</a></h2>
+  <p>YOLO Studio is an MIT-licensed FastAPI + Vue workbench that goes from SAM-assisted labeling to real Ultralytics training and ONNX export, without…</p>
+</li>
+<li>
+  <div class="date">2026-10-26 · 5 min read</div>
+  <h2><a href="en/sam-mask-to-editable-yolo-polygon.html">SAM returns a mask. YOLO wants a polygon. Here's the pixel math in between.</a></h2>
+  <p>How we turn Segment Anything prompts into editable, normalized YOLO segmentation labels — including the shape bug that silently only uses your first…</p>
+</li>
+<li>
+  <div class="date">2026-10-26 · 6 min read</div>
+  <h2><a href="en/finetune-yolo-locally-tutorial.html">Fine-tune YOLO on your own images, locally: labeling to ONNX export</a></h2>
+  <p>A practical, no-cloud walkthrough of the whole loop — project setup, SAM-assisted polygon labels, split discipline, training parameters that matter…</p>
+</li></ul>
+<h2 id="zh" style="margin-top:44px;font-size:15px;letter-spacing:1px;color:#66788a;text-transform:uppercase">中文</h2>
+<ul class="list"><li>
+  <div class="date">2026-10-26 · 约 5 分钟</div>
+  <h2><a href="zh/design-tradeoffs-of-a-local-yolo-workbench.html">把 Roboflow 那套流程搬回本地之后，我们做了哪几个取舍</a></h2>
+  <p>一篇偏工程决策的说明：YOLO Studio 为什么这样设计，以及它现在明确做不到什么。</p>
+</li>
+<li>
+  <div class="date">2026-10-26 · 约 2 分钟</div>
+  <h2><a href="zh/local-first-yolo-workbench-share.html">分享一下：一个完全本地跑的 YOLO 标注 + 训练工作台</a></h2>
+  <p>它解决什么问题：把"标图 → 训练 → 用模型预标注下一批 → 再训练"这条链路放在一台机器上，浏览器打开就能用，图片不用传出去。适用于图片不能出内网、又不想把 CVAT + Notebook + Excel 拼一遍的场景。</p>
+</li></ul>
+</main>
+<footer class="site"><div class="wrap">
+  <span>MIT · 新疆星途幻想网络科技有限公司</span>
+  <span><a href="https://github.com/cv936669367/yolo-studio">github.com/cv936669367/yolo-studio</a></span>
+</div></footer>
+</body>
+</html>

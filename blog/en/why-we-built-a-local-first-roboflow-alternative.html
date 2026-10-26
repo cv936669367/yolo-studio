@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>We open-sourced a local-first Roboflow alternative for teams that can't upload their images · YOLO Studio</title>
+<meta name="description" content="YOLO Studio is an MIT-licensed FastAPI + Vue workbench that goes from SAM-assisted labeling to real Ultralytics training and ONNX export, without sending a single image to someone else's server.">
+<link rel="canonical" href="https://cv936669367.github.io/yolo-studio/blog/en/why-we-built-a-local-first-roboflow-alternative.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="We open-sourced a local-first Roboflow alternative for teams that can't upload their images">
+<meta property="og:description" content="YOLO Studio is an MIT-licensed FastAPI + Vue workbench that goes from SAM-assisted labeling to real Ultralytics training and ONNX export, without sending a single image to someone else's server.">
+<meta property="og:url" content="https://cv936669367.github.io/yolo-studio/blog/en/why-we-built-a-local-first-roboflow-alternative.html">
+<meta property="og:site_name" content="YOLO Studio">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../index.html">YOLO Studio · Notes</a>
+  <nav class="nav">
+    <a href="https://github.com/cv936669367/yolo-studio">GitHub</a>
+    <a href="https://gitee.com/btdba/yolo-studio">Gitee</a>
+    <a href="../index.html">全部文章</a>
+  </nav>
+</div></header>
+<main class="wrap">
+<article class="post">
+<header>
+<h1>We open-sourced a local-first Roboflow alternative for teams that can't upload their images</h1>
+<div class="meta"><span>2026-10-26</span><span>6 min read</span><span class="tag">opensource</span><span class="tag">computervision</span><span class="tag">machinelearning</span><span class="tag">showdev</span></div>
+</header>
+<p>Most computer-vision tools assume your images can go to the cloud. A lot of them can't. Factory floors, hospital basements, anything under an NDA, anything a customer contract says stays on the premises. The usual fallback is CVAT for labeling, a Jupyter notebook for training, and a spreadsheet to remember which weights came from which run. It works, but every new batch of images means re-assembling the pipeline by hand.</p>
+<p><strong>YOLO Studio</strong> is our attempt to put that pipeline back into one local app. It's MIT licensed, runs on your own machine, and covers the loop that actually matters: label → train → predict → label the next batch.</p>
+<ul>
+<li>Repo: <a href="https://github.com/cv936669367/yolo-studio">github.com/cv936669367/yolo-studio</a></li>
+<li>Mirror (China): <a href="https://gitee.com/btdba/yolo-studio">gitee.com/btdba/yolo-studio</a></li>
+</ul>
+<h2>What's in the box</h2>
+<p>YOLO Studio is a FastAPI backend plus a Vue 3 front end. No Docker, no cloud account, no license key. The first launch creates a <code>data/</code> directory with the SQLite database, uploaded images, model weights and training outputs, and everything after that is local.</p>
+<p>The parts that took the most work:</p>
+<ul>
+<li><strong>Projects with a task type.</strong> You pick rectangle (object detection) or polygon (instance segmentation) up front, define your classes, and the rest of the app filters itself accordingly — a polygon project only offers <code>-seg</code> models at training time.</li>
+<li><strong>Labeling with real tools.</strong> Rectangles, a freehand lasso, polygons with per-vertex editing and 8-handle scaling, undo/redo, copy, and keyboard shortcuts for switching tools and classes.</li>
+<li><strong>SAM-assisted labeling.</strong> Draw a box around an object and SAM finds the outline; or click positive points on the object and negative points on the background and watch the polygon refine before you commit it.</li>
+<li><strong>Model-assisted labeling at two levels.</strong> A downloaded YOLO baseline can pre-label a batch using its own classes; once you've trained a version, that <code>best.pt</code> can pre-label the <em>next</em> batch with <em>your</em> classes.</li>
+<li><strong>Real training, not a mock.</strong> Training calls Ultralytics with your parameters and returns per-epoch metrics, curves, a confusion matrix and validation predictions.</li>
+<li><strong>Version management.</strong> Every run gets its own record, weights, and artifacts, so you can compare two versions on the evaluation page instead of guessing which <code>best.pt</code> is which.</li>
+<li><strong>Export.</strong> <code>best.pt</code>, ONNX or TorchScript, straight out of the artifacts pane.</li>
+<li><strong>Tiled viewing for huge images.</strong> Any image with a side ≥ 5500 px is also served as 1024 px tiles plus a 2048 px preview, so you can zoom into a camera-sized photo while editing. The full image stays available; tiling is an overlay, not a replacement.</li>
+</ul>
+<p><img alt="YOLO Studio annotation workbench: a polygon snapped around a bottle" src="../../docs/screenshots/03-annotate.png" />
+<em>A polygon produced by Smart Select, still fully editable — 120 points in this example. The UI is Chinese-first; more on that below.</em></p>
+<h2>The loop is the product</h2>
+<p>Single features are easy to copy. What's harder is making the output of one stage the input of the next, and that's the design constraint we kept coming back to.</p>
+<p>You label a representative batch by hand. You train a first model. That model is now a labeling tool: run it over the next few hundred images, and it produces draft annotations — boxes for detection projects, polygons for segmentation projects — with a confidence threshold and an image range you choose. You fix what it got wrong, add what it missed, and train again. Each round moves human effort from <em>drawing</em> to <em>reviewing</em>, which is the only kind of speedup that survives contact with a messy dataset.</p>
+<p><img alt="Dataset view with train/val/test splits and annotated/unannotated filters" src="../../docs/screenshots/02-dataset.png" />
+<em>Filter to the unannotated images, pre-label them, then review.</em></p>
+<p>The same logic applies to SAM, but earlier in the process. SAM is very good at "where is the edge of the thing you pointed at" and useless at "what is this thing". So YOLO Studio uses it strictly as a geometry tool: you supply the location prompt (a box, or positive/negative clicks), SAM supplies the mask, the app converts that mask into a normalized polygon, and you supply the class and the final correction. A box prompt is a good fit for objects with a clean boundary; positive/negative points are better when the object touches similar-coloured background and the box would drag extra pixels in.</p>
+<p><img alt="Training configuration" src="../../docs/screenshots/04-train.png" />
+<em>Epochs, image size, batch size, learning rate, optimizer, early stopping, augmentation. These are passed to Ultralytics, not just displayed.</em></p>
+<h2>What it is not</h2>
+<p>This is a v1 from a small team, and the honest list is more useful than the feature list:</p>
+<ul>
+<li><strong>The UI is Chinese-only.</strong> There's no i18n layer yet; strings live in the Vue components. Localizing it is the most obvious first contribution and we'd take that PR gladly.</li>
+<li><strong>Training device selection is MPS or CPU.</strong> The code checks for Apple Silicon's MPS backend and otherwise falls back to CPU. There is no CUDA branch today — if you're on an NVIDIA box you can train, but not with GPU acceleration through this app.</li>
+<li><strong>The dependency is pinned to <code>ultralytics==8.3.0</code>.</strong> The model list includes newer families, but whether a given weight loads depends on the installed Ultralytics version. Start with YOLOv8 and work outward.</li>
+<li><strong>It is single-user and has no auth.</strong> It's a local workbench, not a multi-tenant service. Don't expose it to a network you don't control.</li>
+<li><strong>Evaluation metrics shown are box metrics.</strong> For segmentation projects, look at mask metrics and the actual contour quality as well.</li>
+<li><strong>Pre-labeling with a baseline matches class names literally.</strong> A COCO <code>bottle</code> doesn't automatically match your class called <code>drinks</code>. Your own trained model doesn't have this problem, which is why the second round gets better.</li>
+</ul>
+<p>We'd rather list those than have you find them after an afternoon of setup.</p>
+<h2>Running it</h2>
+<pre><code class="language-bash"># backend
+cd backend
+python -m venv venv &amp;&amp; source venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+
+# frontend (second terminal)
+cd frontend
+npm install
+npm run dev
+</code></pre>
+<p>Then open <code>http://localhost:3000</code>. Python 3.9+ and Node 18+. You'll download the SAM weights (~375 MB) and any baseline YOLO weights from inside the app on first use; the app tries a few mirrors and falls back to the official source.</p>
+<p><img alt="Evaluation page comparing metrics across runs" src="../../docs/screenshots/05-evaluate.png" />
+<em>Metrics are read from each run's own results, so versions stay comparable.</em></p>
+<h2>Why we built it this way</h2>
+<p>Two constraints shaped most of the decisions.</p>
+<p>The first was that the data doesn't move. Once you accept that, "local-first" stops being a marketing word and becomes an architecture: SQLite instead of Postgres, files on disk instead of object storage, a single process instead of a queue. It also means the app can be audited — you can read every table and every file it writes.</p>
+<p>The second was that the people labeling aren't always the people who own the GPU. A workbench that assumes a terminal, a conda environment and a YAML file excludes most of the people who actually know what the objects in the photos are. The training page exposes the parameters, but it also refuses to start a run with a model that hasn't finished downloading, and it keeps the run history visible.</p>
+<p>We also ship a Chinese download mirror setup because <code>github.com</code> release assets are unreliable from mainland China, which is where most of our users are. That's a localization detail, not a security claim: the app prefers a mirror and falls back to the official URL.</p>
+<h2>Try it</h2>
+<pre><code class="language-bash">git clone https://github.com/cv936669367/yolo-studio
+</code></pre>
+<p>If you have a folder of images and a class list, you can be at "first trained model" without leaving the browser. If you try it and something breaks, an issue with your OS, Python version and the failing step is genuinely useful — that's how the limitations list above gets shorter.</p>
+<p>And if you're the person who would translate the UI, the repo is MIT and the offer stands.</p>
+<hr />
+<p><em>YOLO Studio is built by Xinjiang Xingtuhuanxiang Network Technology Co., Ltd. (星途幻想) in Xinjiang, China. Ultralytics and SAM have their own licenses; check them before commercial deployment.</em></p>
+</article>
+</main>
+<footer class="site"><div class="wrap">
+  <span>YOLO Studio · MIT · 新疆星途幻想网络科技有限公司</span>
+  <span><a href="https://github.com/cv936669367/yolo-studio">https://github.com/cv936669367/yolo-studio</a></span>
+</div></footer>
+</body>
+</html>

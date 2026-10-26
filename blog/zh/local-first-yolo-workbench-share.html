@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>分享一下：一个完全本地跑的 YOLO 标注 + 训练工作台 · YOLO Studio</title>
+<meta name="description" content="它解决什么问题：把&quot;标图 → 训练 → 用模型预标注下一批 → 再训练&quot;这条链路放在一台机器上，浏览器打开就能用，图片不用传出去。适用于图片不能出内网、又不想把 CVAT + Notebook + Excel 拼一遍的场景。">
+<link rel="canonical" href="https://cv936669367.github.io/yolo-studio/blog/zh/local-first-yolo-workbench-share.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="分享一下：一个完全本地跑的 YOLO 标注 + 训练工作台">
+<meta property="og:description" content="它解决什么问题：把&quot;标图 → 训练 → 用模型预标注下一批 → 再训练&quot;这条链路放在一台机器上，浏览器打开就能用，图片不用传出去。适用于图片不能出内网、又不想把 CVAT + Notebook + Excel 拼一遍的场景。">
+<meta property="og:url" content="https://cv936669367.github.io/yolo-studio/blog/zh/local-first-yolo-workbench-share.html">
+<meta property="og:site_name" content="YOLO Studio">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../index.html">YOLO Studio · Notes</a>
+  <nav class="nav">
+    <a href="https://github.com/cv936669367/yolo-studio">GitHub</a>
+    <a href="https://gitee.com/btdba/yolo-studio">Gitee</a>
+    <a href="../index.html">全部文章</a>
+  </nav>
+</div></header>
+<main class="wrap">
+<article class="post">
+<header>
+<h1>分享一下：一个完全本地跑的 YOLO 标注 + 训练工作台</h1>
+<div class="meta"><span>2026-10-26</span><span>约 2 分钟</span></div>
+</header>
+<p>公司内部做了个工具，最近开源了，MIT。想着可能有人用得上，发出来求点反馈。</p>
+<p><strong>它解决什么问题</strong>：把"标图 → 训练 → 用模型预标注下一批 → 再训练"这条链路放在一台机器上，浏览器打开就能用，图片不用传出去。适用于图片不能出内网、又不想把 CVAT + Notebook + Excel 拼一遍的场景。</p>
+<p><strong>大致能力</strong>：</p>
+<ul>
+<li>工程分两类：矩形（检测）/ 多边形（分割），类别自己定，数据按 train/val/test 比例自动划分</li>
+<li>标注：矩形、自由套索、多边形，支持顶点编辑、8 手柄缩放、撤销、快捷键</li>
+<li>SAM 辅助：画个框让 SAM 找轮廓，或者左键加正点、右键加负点，预览确认后再保存，出来的是可编辑多边形</li>
+<li>预标注：基线模型（按类名匹配，比如 COCO 的 bottle）或本工程训好的 best.pt，支持置信度阈值、范围选择、中途取消</li>
+<li>训练：真实调用 Ultralytics，逐 epoch 回传指标；参数包括轮数、imgsz、batch、学习率、优化器、早停、增强；支持拿已有 run 做迁移学习</li>
+<li>验证：mAP@50 / mAP@50:95 / P / R、训练曲线、混淆矩阵、预测样例，多版本切换对比</li>
+<li>导出：best.pt、ONNX、TorchScript</li>
+<li>大图：长边 ≥ 5500px 会切 1024 瓦片 + 2048 预览</li>
+</ul>
+<p><strong>技术栈</strong>：FastAPI + SQLAlchemy + SQLite / Vue 3 + Element Plus + Vite / Ultralytics + SAM。前后端分离，本地起两个端口，数据都在 <code>backend/data/</code>。</p>
+<p><strong>已知问题，先说清楚</strong>：</p>
+<ul>
+<li>界面只有中文，没有 i18n；</li>
+<li>训练设备只判断 MPS 或 CPU，没有 CUDA 分支（NVIDIA 机器能跑，但走 CPU）；</li>
+<li>依赖锁 <code>ultralytics==8.3.0</code>，模型列表里有新系列，但能不能加载要看实际版本；</li>
+<li>单用户、无鉴权，别往外网暴露；</li>
+<li>验证集为空时会借一张训练图，自己准备独立验证集；</li>
+<li>轮廓抽稀是距离阈值 + 等距取样，不是 RDP，细长/透明物体还是手工修更稳。</li>
+</ul>
+<p><strong>地址</strong>：https://github.com/cv936669367/yolo-studio （Gitee 镜像：https://gitee.com/btdba/yolo-studio）</p>
+<p>启动就是常规的 Python venv + npm install，README 里有命令。想用智能标注要先下 375MB 的 sam_b.pt。</p>
+<p>有在真实数据上试过的，欢迎说说卡在哪；界面英文化、RDP 抽稀、CUDA 分支这几个 PR 都缺人。</p>
+</article>
+</main>
+<footer class="site"><div class="wrap">
+  <span>YOLO Studio · MIT · 新疆星途幻想网络科技有限公司</span>
+  <span><a href="https://github.com/cv936669367/yolo-studio">https://github.com/cv936669367/yolo-studio</a></span>
+</div></footer>
+</body>
+</html>

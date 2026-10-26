@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fine-tune YOLO on your own images, locally: labeling to ONNX export · YOLO Studio</title>
+<meta name="description" content="A practical, no-cloud walkthrough of the whole loop — project setup, SAM-assisted polygon labels, split discipline, training parameters that matter, evaluation, and export.">
+<link rel="canonical" href="https://cv936669367.github.io/yolo-studio/blog/en/finetune-yolo-locally-tutorial.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Fine-tune YOLO on your own images, locally: labeling to ONNX export">
+<meta property="og:description" content="A practical, no-cloud walkthrough of the whole loop — project setup, SAM-assisted polygon labels, split discipline, training parameters that matter, evaluation, and export.">
+<meta property="og:url" content="https://cv936669367.github.io/yolo-studio/blog/en/finetune-yolo-locally-tutorial.html">
+<meta property="og:site_name" content="YOLO Studio">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+  <a class="brand" href="../index.html">YOLO Studio · Notes</a>
+  <nav class="nav">
+    <a href="https://github.com/cv936669367/yolo-studio">GitHub</a>
+    <a href="https://gitee.com/btdba/yolo-studio">Gitee</a>
+    <a href="../index.html">全部文章</a>
+  </nav>
+</div></header>
+<main class="wrap">
+<article class="post">
+<header>
+<h1>Fine-tune YOLO on your own images, locally: labeling to ONNX export</h1>
+<div class="meta"><span>2026-10-26</span><span>6 min read</span><span class="tag">tutorial</span><span class="tag">computervision</span><span class="tag">machinelearning</span><span class="tag">python</span></div>
+</header>
+<p>This is the walkthrough I wish existed when I started: every step from a folder of phone photos to an ONNX file, without uploading the images anywhere.</p>
+<p>I'll use <a href="https://github.com/cv936669367/yolo-studio">YOLO Studio</a> as the workbench because it's the one I know, and because it's MIT licensed and local. The workflow itself is not specific to it — if you'd rather drive Ultralytics from a notebook and label in CVAT, the sequence and the pitfalls are the same.</p>
+<h2>What you need</h2>
+<ul>
+<li>Python 3.9+ (3.10+ recommended) and Node 18+</li>
+<li>A machine that can run PyTorch. Apple Silicon gets MPS acceleration; otherwise CPU, which is slower but fine for small datasets</li>
+<li>Some images and a clear idea of the classes. "Some" means: 50 is enough for a smoke test, a few hundred is where fine-tuning starts to be useful. More important than count is variety — angles, lighting, backgrounds, occlusion</li>
+<li>Patience for one ~375 MB SAM download if you want assisted polygon labeling</li>
+</ul>
+<h2>1. Install and start</h2>
+<pre><code class="language-bash">git clone https://github.com/cv936669367/yolo-studio
+cd yolo-studio/backend
+python -m venv venv &amp;&amp; source venv/bin/activate
+pip install -r requirements.txt
+
+# terminal 2
+cd ../frontend &amp;&amp; npm install &amp;&amp; npm run dev
+</code></pre>
+<p>Backend on <code>:8000</code>, UI on <code>:3000</code>. There's also a <code>start.sh</code> that manages both, but it expects the venv and <code>node_modules</code> to exist already, so do the two installs once either way. The first API call creates <code>backend/data/</code> with the SQLite database and the image/weight/output directories.</p>
+<h2>2. Create the project — and mean it</h2>
+<p>Pick the task type deliberately:</p>
+<ul>
+<li><strong>Rectangle / detection</strong> if "where is it" is the question. Labels are boxes, training uses <code>yolov8n.pt</code>-style detect weights.</li>
+<li><strong>Polygon / segmentation</strong> if the outline matters — defects, area measurement, anything where a box around a bottle is too coarse. Labels are polygons, and training only offers <code>-seg</code> weights.</li>
+</ul>
+<p>The class list is the contract for everything downstream. <code>drinks</code> and <code>bottle</code> are different classes forever, and pre-labeling from a COCO baseline matches names literally, so a baseline's <code>bottle</code> will not help a class called <code>drinks</code>. Decide the names first; renaming later means touching every annotation.</p>
+<h2>3. Upload, then split on purpose</h2>
+<p>Batch upload, then set split ratios. The default random split is fine for web-scraped images, and wrong for photos from a production line: five frames of the same object 0.3 seconds apart are near-duplicates, and if one lands in train and another in val, your validation score is measuring memorization.</p>
+<p>Before training, check the split. Keep whole capture sessions on one side. If you're not sure, be conservative: a slightly smaller training set with an honest validation set beats a flattering number.</p>
+<p>Also beware the "unannotated" filter: it asks whether an image has <em>any</em> annotation, not whether all objects are labeled. A picture with one box drawn and three objects in it counts as annotated.</p>
+<h2>4. Label — box, polygon, or prompt</h2>
+<p>For detection, boxes. For segmentation, start with a box prompt and let SAM do the outline:</p>
+<ul>
+<li><strong>Box prompt:</strong> drag a rectangle around the object. SAM segments inside it and returns a polygon with the vertices already in the editor. Good for clean, well-separated objects.</li>
+<li><strong>Point prompt:</strong> left-click on the object to add a positive point, right-click on background to add a negative one. Better when the object touches similarly coloured background and a box would drag the wrong pixels in.</li>
+<li><strong>Manual:</strong> polygon with per-vertex editing, a freehand lasso, plus rectangles. Still the right tool for thin structures, transparent objects and anything AMOLED-reflective.</li>
+</ul>
+<p>The generated polygon is editable, not baked. SAM's job is to get you to "roughly right"; your job is the class, the boundary convention (does the neck count as part of the bottle?) and the cases it got wrong.</p>
+<p>Two conventions worth writing down before you label 300 images: how you treat occluded objects (label the visible part? skip?), and whether truncated objects at the frame edge get labeled. Inconsistent conventions produce a model that's confidently inconsistent.</p>
+<p><img alt="Labeling with SAM-assisted polygons" src="../../docs/screenshots/03-annotate.png" />
+<em>The polygon in the editor came from a single box prompt. Every vertex is still draggable.</em></p>
+<h2>5. Train — the parameters that actually matter</h2>
+<p>Start with a small model. <code>YOLOv8n</code> or <code>YOLOv8s</code> will tell you in minutes whether your data/labels/split are sane. Move to <code>m</code> or <code>l</code> only after the small model's curves look reasonable.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Reasonable start</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Epochs</td>
+<td>50–100 for a small dataset</td>
+<td>Too few underfits; too many overfits — watch the validation curve, not the training loss</td>
+</tr>
+<tr>
+<td>Image size</td>
+<td>640</td>
+<td>Larger costs memory and time roughly quadratically; only useful if small objects matter</td>
+</tr>
+<tr>
+<td>Batch size</td>
+<td>As large as fits</td>
+<td>Lower it first if you hit memory errors</td>
+</tr>
+<tr>
+<td>Learning rate</td>
+<td>Leave the default</td>
+<td>Change it only when you have a reason</td>
+</tr>
+<tr>
+<td>Early stopping</td>
+<td>On, patience ~20–50</td>
+<td>Stops runs that have stopped improving</td>
+</tr>
+</tbody>
+</table>
+<p>Two things that surprise people:</p>
+<ul>
+<li><strong>The first epoch looks terrible.</strong> mAP near zero at epoch 1 is normal for fine-tuning; the curve usually climbs after the warmup. Don't cancel.</li>
+<li><strong>The model list is not a menu of equally-supported options.</strong> The app is pinned to <code>ultralytics==8.3.0</code>. Newer families in the list may need a newer Ultralytics to load their weights. YOLOv8 is the safe path; verify before committing to anything newer.</li>
+</ul>
+<p>Training picks MPS if available, otherwise CPU. There's no CUDA branch in the current code, so an NVIDIA box will run on CPU — workable for a small dataset, painful for a large one.</p>
+<p><img alt="Training configuration page" src="../../docs/screenshots/04-train.png" />
+<em>Pick the base weights, set epochs/imgsz/batch, and watch the per-epoch metrics come back.</em></p>
+<h2>6. Read the evaluation page like a skeptic</h2>
+<p>The cards show mAP@50, mAP@50:95, precision and recall. What they mean in practice:</p>
+<ul>
+<li><strong>Precision</strong> — of the objects the model reported, how many were right. Low precision = false alarms.</li>
+<li><strong>Recall</strong> — of the objects that were there, how many it found. Low recall = misses.</li>
+<li><strong>mAP@50</strong> — average precision at a loose IoU threshold. Good for "is the model in the right area".</li>
+<li><strong>mAP@50:95</strong> — averaged over stricter thresholds. Closer to what deployment feels like.</li>
+</ul>
+<p>Then look at the confusion matrix and the validation predictions, not just the numbers. A 0.98 mAP on 8 validation images is not a result; it's a rounding error with a progress bar. If your validation set is tiny, expect the number to move a lot between runs.</p>
+<p>For segmentation projects, remember the metric cards read <strong>box</strong> metrics. Mask quality and contour smoothness need their own check — look at the predicted contours, especially on the objects you know are hard.</p>
+<h2>7. Test on images the model has never seen</h2>
+<p>Upload a handful of <em>new</em> photos on the test page, pick the run, and move the confidence threshold around. Lower threshold → more candidates and more false positives; higher → fewer, cleaner, more misses. The NMS IoU threshold handles overlapping duplicate boxes on crowded scenes.</p>
+<p>This is the step where you find out that your dataset was 80% one background. Fix it by adding images, not by retraining the same data harder.</p>
+<h2>8. Export</h2>
+<p><code>best.pt</code> for PyTorch, or export to ONNX / TorchScript from the artifacts pane. Export runs through Ultralytics, so the usual caveats apply: the exported graph is fixed to the image size you exported with, and you should re-validate the exported model against the PyTorch one on a few images before shipping it. ONNX Runtime, TensorRT and OpenVINO all have their own quantization and layout quirks; "it exported" is not "it deploys".</p>
+<h2>9. Close the loop</h2>
+<p>The part that makes this a workflow rather than a one-off: take the <code>best.pt</code> you just trained, run it over the <em>next</em> batch of unannotated images, and use the output as draft labels. Fix them, retrain, repeat. Each round shifts human time from drawing to reviewing — and the second round is where a custom model starts beating a generic baseline, because it finally knows your classes.</p>
+<p>A few guardrails for auto-labeling:</p>
+<ul>
+<li>Start with a small range of images and a threshold you trust, not the whole dataset at once.</li>
+<li>Review everything the first time. The point is to catch systematic errors before they get baked into the next training set.</li>
+<li>Cancelling a run keeps the labels already written, so a partial pass is not wasted.</li>
+<li>In polygon projects, a missing contour falls back to a four-corner box. Check those — they're the ones that quietly poison a segmentation dataset.</li>
+</ul>
+<p>That's the whole loop. No cloud account, no upload, no per-image pricing. Just a folder, a model, and a habit of looking at the validation predictions before believing the number.</p>
+<p>Repo: <a href="https://github.com/cv936669367/yolo-studio">github.com/cv936669367/yolo-studio</a> — MIT.</p>
+</article>
+</main>
+<footer class="site"><div class="wrap">
+  <span>YOLO Studio · MIT · 新疆星途幻想网络科技有限公司</span>
+  <span><a href="https://github.com/cv936669367/yolo-studio">https://github.com/cv936669367/yolo-studio</a></span>
+</div></footer>
+</body>
+</html>
